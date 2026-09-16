@@ -55,12 +55,17 @@ private def decide(): Unit receives conn, thisSuite, logger =
   val second = coupons[1].cast[py.Dict].get("id").asInt
   Campaigns.approve(first)
   Campaigns.reject(second)
-  val approved = DB.rowWith("SELECT status, expires_on, date('now', '+14 days') AS due FROM coupons WHERE id = ?", py.list(first))
+  val approved = DB.rowWith:
+    "SELECT status, expires_on, date('now', '+14 days') AS due FROM coupons WHERE id = ?"
+    py.list(first)
   check("approving makes an active coupon", approved.get("status").asString == "active")
   check("that expires after the campaign's validity", approved.get("expires_on").asString == approved.get("due").asString)
+  val rejected = DB.rowWith:
+    "SELECT amount_cents FROM coupons WHERE id = ?"
+    py.list(second)
   check:
     "rejecting frees its share of the budget"
-    Campaigns.committedCents(1) == 2700 - DB.rowWith("SELECT amount_cents FROM coupons WHERE id = ?", py.list(second)).get("amount_cents").asInt
+    Campaigns.committedCents(1) == 2700 - rejected.get("amount_cents").asInt
   val twice = py.try(Campaigns.approve(second))
   check("a rejected draft cannot be approved", twice is Err(_))
 

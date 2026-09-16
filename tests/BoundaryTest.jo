@@ -106,8 +106,11 @@ def runTask(): Unit receives IO.stdout, promotions =
     check("the draft is refused", printed.contains("Rejected: this run has finished"))
 
 private def draftsAndCoupons(): String receives conn =
-  val row = conn.execute("""
-    SELECT (SELECT COUNT(*) FROM coupons WHERE status = 'draft'),
-           (SELECT COUNT(*) FROM coupons WHERE status = 'active' AND campaign_id IS NOT NULL)
-  """).fetchone()
+  val row = conn
+    .execute:
+       """
+       SELECT (SELECT COUNT(*) FROM coupons WHERE status = 'draft'),
+              (SELECT COUNT(*) FROM coupons WHERE status = 'active' AND campaign_id IS NOT NULL)
+       """
+    .fetchone()
   "\{row[0].asInt} draft, \{row[1].asInt} active"

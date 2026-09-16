@@ -201,34 +201,41 @@ section Seed
         py.list(orderId, item.product, item.quantity, price(item.product))
 
   private def price(product: Int): Int receives conn =
-    conn.execute("SELECT price_cents FROM products WHERE id = ?", py.list(product)).fetchone()[0].asInt
+    conn
+      .execute:
+         "SELECT price_cents FROM products WHERE id = ?"
+         py.list(product)
+      .fetchone()[0].asInt
 
   //[ Coupons from before the planner: Sofia still holds one, Tim's expired, and
     ! Anna used hers.
   //]
   private def coupons(): Unit receives conn =
-    conn.execute("""
+    conn.execute:
+      """
       INSERT INTO coupons(code, customer_id, amount_cents, minimum_spend_cents, status,
                           reason, created_at, decided_at, expires_on, used_on)
       SELECT 'THANKS-SOFIA', id, 500, 3000, 'active', 'Sorry for the late delivery',
              datetime('now','-25 days'), datetime('now','-25 days'), date('now','+5 days'), ''
       FROM customers WHERE email = 'sofia.rossi@example.net'
-    """)
-    conn.execute("""
+      """
+    conn.execute:
+      """
       INSERT INTO coupons(code, customer_id, amount_cents, minimum_spend_cents, status,
                           reason, created_at, decided_at, expires_on, used_on)
       SELECT 'SPRING-TIM', id, 500, 2500, 'active', 'Spring newsletter',
              datetime('now','-40 days'), datetime('now','-40 days'), date('now','-10 days'), ''
       FROM customers WHERE email = 'tim.fischer@example.org'
-    """)
-    conn.execute("""
+      """
+    conn.execute:
+      """
       INSERT INTO coupons(code, customer_id, amount_cents, minimum_spend_cents, status,
                           reason, created_at, decided_at, expires_on, used_on)
       SELECT 'SPRING-ANNA', id, 500, 2500, 'used', 'Spring newsletter',
              datetime('now','-40 days'), datetime('now','-40 days'), date('now','-10 days'),
              date('now','-26 days')
       FROM customers WHERE email = 'anna.keller@example.com'
-    """)
+      """
 
   private def campaign(): Unit receives conn =
     val _ = DB.insert:

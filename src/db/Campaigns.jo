@@ -26,11 +26,13 @@ section Campaigns
       + "If the budget cannot cover everyone, the customers furthest behind their usual "
       + "schedule, measured in usual gaps, go first."
 
-  def campaigns(): py.List receives conn = DB.rows("""
-    SELECT m.*,
-           (SELECT COUNT(*) FROM coupons k WHERE k.campaign_id = m.id AND k.status = 'draft') AS drafts
-    FROM campaigns m ORDER BY m.id
-  """)
+  def campaigns(): py.List receives conn =
+    DB.rows:
+      """
+      SELECT m.*,
+             (SELECT COUNT(*) FROM coupons k WHERE k.campaign_id = m.id AND k.status = 'draft') AS drafts
+      FROM campaigns m ORDER BY m.id
+      """
 
   //[ One campaign with its budget, its coupons and its runs: everything the
     ! campaign page shows.
@@ -40,7 +42,10 @@ section Campaigns
     if found.size == 0 then abort "no such campaign"
     found.set("committed_cents", committedCents(id))
     found.set("coupons", coupons(id))
-    found.set("runs", DB.rowsWith("SELECT * FROM runs WHERE campaign_id = ? ORDER BY id DESC LIMIT 20", py.list(id)))
+    val runs = DB.rowsWith:
+      "SELECT * FROM runs WHERE campaign_id = ? ORDER BY id DESC LIMIT 20"
+      py.list(id)
+    found.set("runs", runs)
     found
 
   //[ Drafts, approved, used and rejected coupons from this campaign, each with

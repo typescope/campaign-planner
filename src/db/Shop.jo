@@ -12,51 +12,57 @@ section Shop
   //[ Customers, most recent buyers first, with what the owner wants to know at
     ! a glance.
   //]
-  def customers(): py.List receives conn = DB.rows("""
-    SELECT c.id, c.name, c.email, c.phone, c.street, c.postcode, c.city, c.created_on,
-           COALESCE(s.orders, 0) AS orders,
-           COALESCE(s.spent_cents, 0) AS spent_cents,
-           COALESCE(s.last_order, '') AS last_order,
-           COALESCE(k.open_coupons, 0) AS open_coupons
-    FROM customers c
-    LEFT JOIN (SELECT customer_id, COUNT(*) AS orders, SUM(subtotal_cents) AS spent_cents,
-                      MAX(placed_on) AS last_order
-               FROM orders WHERE status = 'paid' GROUP BY customer_id) s
-      ON s.customer_id = c.id
-    LEFT JOIN (SELECT customer_id, COUNT(*) AS open_coupons FROM coupons
-               WHERE status = 'active' AND (expires_on = '' OR expires_on >= date('now'))
-               GROUP BY customer_id) k
-      ON k.customer_id = c.id
-    ORDER BY COALESCE(s.last_order, '') DESC, c.name
-  """)
+  def customers(): py.List receives conn =
+    DB.rows:
+      """
+      SELECT c.id, c.name, c.email, c.phone, c.street, c.postcode, c.city, c.created_on,
+             COALESCE(s.orders, 0) AS orders,
+             COALESCE(s.spent_cents, 0) AS spent_cents,
+             COALESCE(s.last_order, '') AS last_order,
+             COALESCE(k.open_coupons, 0) AS open_coupons
+      FROM customers c
+      LEFT JOIN (SELECT customer_id, COUNT(*) AS orders, SUM(subtotal_cents) AS spent_cents,
+                        MAX(placed_on) AS last_order
+                 FROM orders WHERE status = 'paid' GROUP BY customer_id) s
+        ON s.customer_id = c.id
+      LEFT JOIN (SELECT customer_id, COUNT(*) AS open_coupons FROM coupons
+                 WHERE status = 'active' AND (expires_on = '' OR expires_on >= date('now'))
+                 GROUP BY customer_id) k
+        ON k.customer_id = c.id
+      ORDER BY COALESCE(s.last_order, '') DESC, c.name
+      """
 
   //[ Orders, newest first, each with its items spelled out. //]
-  def orders(): py.List receives conn = DB.rows("""
-    SELECT o.id, o.placed_on, o.status, o.subtotal_cents, o.delivery_note,
-           c.id AS customer_id, c.name AS customer_name, c.city,
-           (SELECT GROUP_CONCAT(i.quantity || ' × ' || p.name, ', ')
-            FROM order_items i JOIN products p ON p.id = i.product_id
-            WHERE i.order_id = o.id) AS items
-    FROM orders o JOIN customers c ON c.id = o.customer_id
-    ORDER BY o.placed_on DESC, o.id DESC
-  """)
+  def orders(): py.List receives conn =
+    DB.rows:
+      """
+      SELECT o.id, o.placed_on, o.status, o.subtotal_cents, o.delivery_note,
+             c.id AS customer_id, c.name AS customer_name, c.city,
+             (SELECT GROUP_CONCAT(i.quantity || ' × ' || p.name, ', ')
+              FROM order_items i JOIN products p ON p.id = i.product_id
+              WHERE i.order_id = o.id) AS items
+      FROM orders o JOIN customers c ON c.id = o.customer_id
+      ORDER BY o.placed_on DESC, o.id DESC
+      """
 
   //[ Every coupon the shop has issued or is considering. `state` says what it
     ! means today, so an active coupon past its date reads as expired.
   //]
-  def coupons(): py.List receives conn = DB.rows("""
-    SELECT k.id, k.code, k.amount_cents, k.minimum_spend_cents, k.status, k.reason,
-           k.created_at, k.expires_on, k.used_on,
-           CASE WHEN k.status = 'active' AND k.expires_on != '' AND k.expires_on < date('now')
-                THEN 'expired' ELSE k.status END AS state,
-           c.id AS customer_id, c.name AS customer_name,
-           COALESCE(m.name, '') AS campaign_name
-    FROM coupons k
-    JOIN customers c ON c.id = k.customer_id
-    LEFT JOIN campaigns m ON m.id = k.campaign_id
-    WHERE k.status NOT IN ('superseded')
-    ORDER BY k.created_at DESC, k.id DESC
-  """)
+  def coupons(): py.List receives conn =
+    DB.rows:
+      """
+      SELECT k.id, k.code, k.amount_cents, k.minimum_spend_cents, k.status, k.reason,
+             k.created_at, k.expires_on, k.used_on,
+             CASE WHEN k.status = 'active' AND k.expires_on != '' AND k.expires_on < date('now')
+                  THEN 'expired' ELSE k.status END AS state,
+             c.id AS customer_id, c.name AS customer_name,
+             COALESCE(m.name, '') AS campaign_name
+      FROM coupons k
+      JOIN customers c ON c.id = k.customer_id
+      LEFT JOIN campaigns m ON m.id = k.campaign_id
+      WHERE k.status NOT IN ('superseded')
+      ORDER BY k.created_at DESC, k.id DESC
+      """
 
   //[ The counts the sidebar shows, one per page. //]
   def counts(): py.Dict receives conn =
