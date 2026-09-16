@@ -37,9 +37,11 @@ jobs:
         with:
           python-version: '3.12'
 
+      # Pinned to the compiler the published harpe 0.9 package loads with. Jo
+      # 0.13.4 fails to read it, so the latest release is not safe to take.
       - name: Install Jo
         run: |
-          curl -sSf https://jo-lang.org/install.sh | sh
+          curl -sSf https://jo-lang.org/install.sh | JO_VERSION=0.13.0 sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install requirements
