@@ -1,0 +1,221 @@
+namespace sandbox.runtime
+
+import sandbox.api
+
+//[ The implementation of `Promotions`: trusted code that queries the shop
+  ! database directly.
+  !
+  ! It is linked into the same process as the AI-generated program, which is
+  ! compiled against `api` alone and so cannot name this class, the connection,
+  ! or the path. Everything the program receives is built here, and only from
+  ! purchase dates, amounts and coupon terms.
+  !
+  ! `saveDrafts` is where the campaign's limits hold, whatever the program
+  ! asks for: known customers, one offer each, the per-offer ceiling, the
+  ! budget, and drafts only. Coupon codes are generated here.
+//]
+class PromotionsImpl(path: String, campaignId: Int, runId: Int)
+  view api.Promotions
+
+  //[ Stand-in label to customer id, filled by `customers()` in its order. //]
+  private var labels: Map[String, Int] = Map.empty[String, Int]
+  private var labelled: Bool = false
+
+  def today(): String =
+    val conn = connect()
+    val day = conn.execute("SELECT date('now')").fetchone()[0].asString
+    conn.close()
+    day
+
+  def budget(): api.Budget =
+    val conn = connect()
+    val campaign = campaignRow(conn)
+    val available = campaign[1].asInt - committedCents(conn)
+    conn.close()
+    new api.Budget(campaign[0].asString, available, campaign[2].asInt)
+
+  def customers(): List[api.Customer] =
+    val conn = connect()
+    val rows = conn.execute("""
+      SELECT o.customer_id, o.placed_on,
+             CAST(julianday(date('now')) - julianday(o.placed_on) AS INTEGER),
+             o.subtotal_cents
+      FROM orders o
+      WHERE o.status = 'paid'
+      ORDER BY o.customer_id, o.placed_on, o.id
+    """).fetchall()
+    conn.close()
+
+    var result: List[api.Customer] = []
+    var refs = Map.empty[String, Int]
+    var current = 0
+    var purchases: List[api.Purchase] = []
+    for raw in py.iter(rows) do
+      val row = py.dynamic(raw)
+      val customerId = row[0].asInt
+      if customerId != current then
+        if current != 0 then
+          val label = "customer-\{refs.size + 1}"
+          refs = refs.add(label, current)
+          result = result + new api.Customer(label, purchases)
+        current = customerId
+        purchases = []
+      purchases = purchases + new api.Purchase(row[1].asString, row[2].asInt, row[3].asInt)
+    if current != 0 then
+      val label = "customer-\{refs.size + 1}"
+      refs = refs.add(label, current)
+      result = result + new api.Customer(label, purchases)
+
+    labels = refs
+    labelled = true
+    result
+
+  def openCoupons(customerId: String): List[api.Coupon] =
+    val id = customerFor(customerId)
+    if id == 0 then abort "Unknown customer \{customerId}. Use a label from customers()."
+    val conn = connect()
+    val rows = conn
+      .execute:
+         """
+         SELECT amount_cents, minimum_spend_cents,
+                CASE WHEN expires_on = '' THEN -1
+                     ELSE CAST(julianday(expires_on) - julianday(date('now')) AS INTEGER) END
+         FROM coupons
+         WHERE customer_id = ? AND status = 'active'
+           AND (expires_on = '' OR expires_on >= date('now'))
+         ORDER BY id
+         """
+         py.list(id)
+      .fetchall()
+    conn.close()
+    var result: List[api.Coupon] = []
+    for raw in py.iter(rows) do
+      val row = py.dynamic(raw)
+      val left = row[2].asInt
+      val daysLeft: Option[Int] = if left < 0 then None else Some(left)
+      result = result + new api.Coupon(row[0].asInt, row[1].asInt, daysLeft)
+    result
+
+  def saveDrafts(offers: List[api.Offer]): String =
+    if offers.isEmpty() then return "Saved no drafts: the list of offers was empty."
+    if offers.size > 1000 then return rejected("at most 1000 offers can be saved at once")
+
+    val conn = connect()
+    conn.execute("BEGIN IMMEDIATE")
+    val outcome = py.try(check(conn, offers))
+    match outcome
+    case Ok(message) if message.startsWith("Rejected:") =>
+      conn.rollback()
+      conn.close()
+      message
+    case Ok(message) =>
+      conn.commit()
+      conn.close()
+      message
+    case Err(error) =>
+      conn.rollback()
+      conn.close()
+      abort error.message
+
+  //[ Validate every offer, and write them all only if every one passes. //]
+  private def check(conn: py.Dynamic, offers: List[api.Offer]): String =
+    val run = conn
+      .execute("SELECT status FROM runs WHERE id = ? AND campaign_id = ?", py.list(runId, campaignId))
+      .fetchone()
+    if run.isNone || run[0].asString != "running" then
+      return rejected("this run has finished, so it cannot save drafts any more")
+
+    val campaign = campaignRow(conn)
+    val currency = campaign[0].asString
+    val maxOffer = campaign[2].asInt
+    val available = campaign[1].asInt - committedCents(conn)
+
+    var seen: List[String] = []
+    var total = 0
+    for offer in offers do
+      val label = offer.customerId
+      val id = customerFor(label)
+      if id == 0 then return rejected("\{label} is not a customer from customers()")
+      if seen.contains(label) then return rejected("\{label} has more than one offer")
+      seen = seen + label
+      if offer.amountCents < 1 || offer.amountCents > maxOffer then
+        return rejected("\{label}: an offer must be between \{money(currency, 1)} and \{money(currency, maxOffer)}")
+      if offer.minimumSpendCents < offer.amountCents then
+        return rejected("\{label}: the minimum spend cannot be lower than the coupon amount")
+      val reason = offer.reason.trim
+      if reason == "" || reason.size > 300 then
+        return rejected("\{label}: a reason of 1 to 300 characters is required")
+      val existing = conn
+        .execute:
+           """
+           SELECT 1 FROM coupons
+           WHERE customer_id = ? AND campaign_id = ? AND status IN ('draft','active','used')
+           LIMIT 1
+           """
+           py.list(id, campaignId)
+        .fetchone()
+      if !existing.isNone then
+        return rejected("\{label} already has a draft or coupon from this campaign")
+      total = total + offer.amountCents
+
+    if total > available then
+      return rejected("the offers add up to \{money(currency, total)}, but only \{money(currency, available)} of the budget is left")
+
+    val secrets = py.module("secrets")
+    for offer in offers do
+      val code = "BACK-" + py.dynamic(secrets.token_hex(4).asString).upper().asString
+      conn.execute:
+        """
+        INSERT INTO coupons
+          (code, customer_id, campaign_id, run_id, amount_cents, minimum_spend_cents,
+           status, reason, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, datetime('now'))
+        """
+        py.list(code, customerFor(offer.customerId), campaignId, runId,
+                offer.amountCents, offer.minimumSpendCents, offer.reason.trim)
+
+    "Saved \{offers.size} draft coupons worth \{money(currency, total)} for the owner to review. "
+      + "\{money(currency, available - total)} of the budget is left."
+
+  private def rejected(why: String): String = "Rejected: \{why}. Nothing was saved."
+
+  //[ The customer id behind a label, or 0. Labels come from `customers()`, so
+    ! they are built on first use when the program has not called it.
+  //]
+  private def customerFor(label: String): Int =
+    if !labelled then
+      val _ = customers()
+    labels.getOrElse(label, 0)
+
+  //[ currency, budget_cents, max_offer_cents //]
+  private def campaignRow(conn: py.Dynamic): py.Dynamic =
+    val row = conn
+      .execute("SELECT currency, budget_cents, max_offer_cents FROM campaigns WHERE id = ?", py.list(campaignId))
+      .fetchone()
+    if row.isNone then abort "campaign \{campaignId} does not exist"
+    py.dynamic(row)
+
+  //[ What the campaign has already spent or promised: drafts awaiting the owner,
+    ! approved coupons, and used ones.
+  //]
+  private def committedCents(conn: py.Dynamic): Int =
+    conn
+      .execute:
+         """
+         SELECT COALESCE(SUM(amount_cents), 0) FROM coupons
+         WHERE campaign_id = ? AND status IN ('draft','active','used')
+         """
+         py.list(campaignId)
+      .fetchone()[0].asInt
+
+  private def connect(): py.Dynamic =
+    val conn = py.module("sqlite3").connect(path, timeout = 10.0, isolation_level = py.none)
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 10000")
+    conn
+
+  private def money(currency: String, cents: Int): String =
+    val fraction = cents % 100
+    val padding = if fraction < 10 then "0" else ""
+    "\{currency} \{cents / 100}.\{padding}\{fraction}"
+end

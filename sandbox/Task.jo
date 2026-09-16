@@ -1,0 +1,8 @@
+namespace sandbox.guest
+
+import sandbox.api.*
+
+// A placeholder, so the guest can be built once before the app starts. Every
+// program the AI writes is compiled in its own directory against the same spec.
+def runTask(): Unit receives IO.stdout, promotions =
+  println "campaign planner sandbox ready"

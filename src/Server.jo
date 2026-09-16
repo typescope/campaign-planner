@@ -1,0 +1,87 @@
+namespace campaign.planner
+
+import harpe.ffi.os
+import harpe.util.File
+import harpe.Model
+import harpe.Http
+import harpe.Http.request
+import campaign.planner.db.DB
+import campaign.planner.db.conn
+import campaign.planner.db.Shop
+import campaign.planner.db.Campaigns
+
+class Server(home: String, databasePath: String, brain: Option[Model])
+  private val planner = new Planner(home, databasePath, brain)
+
+  //[ The routes that need no connection, then everything else on one
+    ! connection for the request. A run opens its own connections, because it
+    ! lasts minutes and only its start and end touch the database here.
+  //]
+  def route(): py.List receives request =
+    match request
+    case Http.Get("/") => asset("index.html", "text/html; charset=utf-8")
+    case Http.Get("/app.css") => asset("app.css", "text/css; charset=utf-8")
+    case Http.Get("/app.js") => asset("app.js", "text/javascript; charset=utf-8")
+    case Http.Post(Http.Segments ["api", "campaigns", id, "run"]) => runCampaign(id)
+    case Http.Get(Http.Segments ["api", "runs", id, "programs"]) =>
+      Http.respondJson(py.dict("programs" ~ Campaigns.programs(planner.logsDir, number(id))))
+    case _ => refusable(() => DB.withConn(databasePath, () => connected()))
+
+  private def connected(): py.List receives request, conn =
+    match request
+    case Http.Get("/api/snapshot") =>
+      Http.respondJson: py.dict:
+        "counts"    ~ Shop.counts()
+        "campaigns" ~ Campaigns.campaigns()
+        "has_model" ~ planner.hasModel
+    case Http.Get("/api/customers") => Http.respondJson(py.dict("customers" ~ Shop.customers()))
+    case Http.Get("/api/orders") => Http.respondJson(py.dict("orders" ~ Shop.orders()))
+    case Http.Get("/api/coupons") => Http.respondJson(py.dict("coupons" ~ Shop.coupons()))
+    case Http.Get(Http.Segments ["api", "campaigns", id]) =>
+      Http.respondJson(py.dict("campaign" ~ Campaigns.campaign(number(id))))
+    case Http.Post("/api/campaigns") => ok(py.dict("id" ~ Campaigns.save(Http.readJson())))
+    case Http.Post("/api/coupons/approve") =>
+      Campaigns.approve(Http.readJson().get("id", 0).asInt)
+      ok(py.dict())
+    case Http.Post("/api/coupons/reject") =>
+      Campaigns.reject(Http.readJson().get("id", 0).asInt)
+      ok(py.dict())
+    case _ => Http.respond("404 Not Found", "application/json", "{\"error\":\"not found\"}")
+
+  //[ A run answers when it ends, with what the AI or the example reported. //]
+  private def runCampaign(id: String): py.List receives request =
+    val mode = Http.readJson().get("mode", "").asString
+    Http.respondJson(planner.run(number(id), mode))
+
+  private def number(text: String): Int = Int.parse(text) rescue None => 0
+
+  private def ok(extra: py.Dict): py.List receives request =
+    extra.set("ok", true)
+    Http.respondJson(extra)
+
+  //[ Everything the shop declines to do is declined for a stated reason, so
+    ! the owner sees the reason rather than a bare error.
+  //]
+  private def refusable(handler: () => py.List): py.List receives request =
+    match py.try(handler())
+    case Ok(response) => response
+    case Err(error) =>
+      Http.respond:
+        "400 Bad Request"
+        "application/json"
+        py.module("json").dumps(py.dict("error" ~ error.message)).asString
+
+  //[ The page may load only its own script and stylesheet. //]
+  private def asset(name: String, mime: String): py.List receives request =
+    val headers = py.list:
+      py.tuple("Content-Type", mime)
+      py.tuple("Cache-Control", "no-store")
+      py.tuple("X-Content-Type-Options", "nosniff")
+      py.tuple:
+        "Content-Security-Policy"
+        "default-src 'none'; script-src 'self'; style-src 'self'; "
+          + "connect-src 'self'; img-src 'self' data:; base-uri 'none'; "
+          + "form-action 'none'"
+    val body = File.read(os.path.join(home, "assets", name))
+    Http.respondBytes("200 OK", headers, py.dynamic(body).encode())
+end

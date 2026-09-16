@@ -1,0 +1,56 @@
+// The sample policy as a program, checked in so the demo runs without an AI.
+// It is compiled and run exactly like a program the AI writes: against
+// `Promotions`, and nothing else.
+namespace sandbox.guest
+
+import sandbox.api.*
+
+private class Late(customer: Customer, gap: Int, elapsed: Int, average: Int)
+
+def runTask(): Unit receives IO.stdout, promotions =
+  val budget = promotions.budget()
+  var late: List[Late] = []
+
+  for customer in promotions.customers() do
+    val purchases = customer.purchases
+    if purchases.size < 3 then continue
+    val first = purchases.get(0)
+    val last = purchases.get(purchases.size - 1)
+    val gap = (first.daysAgo - last.daysAgo) / (purchases.size - 1)
+    if gap <= 0 then continue
+    // Late once one and a half usual gaps have passed.
+    if last.daysAgo * 2 < gap * 3 then continue
+    val total = purchases.fold(0, (sum, p) => sum + p.subtotalCents)
+    late = late + new Late(customer, gap, last.daysAgo, total / purchases.size)
+
+  // Furthest behind first, measured in usual gaps.
+  val queue = late.sortBy(entry => 0 - entry.elapsed * 1000 / entry.gap)
+
+  var offers: List[Offer] = []
+  var allocated = 0
+  for entry in queue do
+    val id = entry.customer.id
+    val open = promotions.openCoupons(id)
+    if !open.isEmpty() then
+      println "\{id}: skipped, already holds \{open.size} unused coupon(s)"
+      continue
+    var amount = entry.average / 10 / 100 * 100
+    if amount < 300 then amount = 300
+    if amount > budget.maxOfferCents then amount = budget.maxOfferCents
+    if allocated + amount > budget.availableCents then
+      println "\{id}: skipped, the budget is used up"
+      continue
+    val minimum = (entry.average + 99) / 100 * 100
+    val behind = entry.elapsed * 10 / entry.gap
+    val reason = "\{entry.elapsed} days since the last order, usually every \{entry.gap} days "
+      + "(\{behind / 10}.\{behind % 10} gaps). Average order \{money(entry.average)}."
+    offers = offers + new Offer(id, amount, minimum, reason)
+    allocated = allocated + amount
+    println "\{id}: offer \{money(amount)} on orders over \{money(minimum)}"
+
+  println promotions.saveDrafts(offers)
+
+private def money(cents: Int): String =
+  val fraction = cents % 100
+  val padding = if fraction < 10 then "0" else ""
+  "CHF \{cents / 100}.\{padding}\{fraction}"

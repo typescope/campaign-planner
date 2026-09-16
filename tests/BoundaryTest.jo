@@ -1,0 +1,113 @@
+//[ BoundaryTest.jo
+  !
+  ! What an AI-generated program can and cannot do.
+//]
+
+namespace campaign.planner.tests.BoundaryTest
+
+
+import harpe.testing.test
+import harpe.testing.thisSuite
+import harpe.testing.check
+import harpe.logging.logger
+import campaign.planner.db.DB
+import campaign.planner.db.conn
+import campaign.planner.db.Campaigns
+import campaign.planner.tests.Guest
+
+//[ Every refusal `saveDrafts` can give, asked for in one program. //]
+private def probeProgram(): String = Guest.program("""
+def runTask(): Unit receives IO.stdout, promotions =
+  val budget = promotions.budget()
+  println("budget: " + budget.availableCents.toString)
+  val first = promotions.customers().get(0).id
+  val second = promotions.customers().get(1).id
+  probe("unknown customer", [new Offer("customer-9999", 300, 3000, "probe")])
+  probe("the same customer twice", [new Offer(first, 300, 3000, "probe"), new Offer(first, 300, 3000, "probe")])
+  probe("over the largest offer", [new Offer(first, budget.maxOfferCents + 1, 99900, "probe")])
+  probe("a minimum below the coupon", [new Offer(first, 500, 400, "probe")])
+  probe("no reason", [new Offer(first, 300, 3000, "   ")])
+  probe("over the budget", [new Offer(first, 1500, 3000, "probe"), new Offer(second, 1500, 3000, "probe"), new Offer("customer-3", 100, 3000, "probe")])
+  probe("accepted", [new Offer(first, 300, 3000, "probe")])
+  probe("a customer who already has a draft", [new Offer(first, 300, 3000, "probe")])
+
+private def probe(label: String, offers: List[Offer]): Unit receives IO.stdout, promotions =
+  println(label + ": " + promotions.saveDrafts(offers))
+""")
+
+//[ A program whose `runTask` is `body`, which must be indented two spaces. //]
+private def inside(body: String): String =
+  Guest.program("def runTask(): Unit receives IO.stdout, promotions =\n" + body)
+
+def boundarySuite(): Unit receives thisSuite, logger =
+  //[ Each of these names something the implementation holds and the program
+    ! does not. The refusal happens before anything runs.
+  //]
+  test: "a program that reaches past the interface does not compile", () =>
+    val path = Guest.freshShop()
+
+    val baseline = Guest.run(path, inside("  println promotions.customers().size.toString\n"))
+    check("a program inside the interface compiles and runs", baseline.contains("60"))
+
+    val name = Guest.run(path, inside("  for c in promotions.customers() do println c.name\n"))
+    check("a customer's name is not a field", name.contains("does not contain the member name"))
+
+    val note = Guest.run(path, inside("  for c in promotions.customers() do println c.purchases.get(0).deliveryNote\n"))
+    check("nor is a delivery note", note.contains("does not contain the member deliveryNote"))
+
+    val sqlite = Guest.run(path, inside("  val db = py.module(\"sqlite3\").connect(\"shop.db\")\n  println \"opened\"\n"))
+    check("the program cannot reach Python, so it cannot open the database", sqlite.contains("Undefined term name py"))
+
+    val environment = Guest.run(path, Guest.program("""
+import harpe.ffi.os
+
+def runTask(): Unit receives IO.stdout, promotions =
+  println os.getenv("CAMPAIGN_DB", "")
+"""))
+    check("nor read where the database is", environment.contains("`harpe` is not found"))
+
+    val impl = Guest.run(path, Guest.program("""
+import sandbox.runtime.*
+
+def runTask(): Unit receives IO.stdout, promotions =
+  val mine = new PromotionsImpl("/tmp/anything.db", 1, 1)
+  println "built my own"
+"""))
+    check("nor build the trusted implementation itself", impl.contains("`runtime` is not a member of sandbox"))
+
+    val approve = Guest.run(path, inside("  promotions.approve(1)\n"))
+    check("and there is no approve to call", approve.contains("does not contain the member approve"))
+
+  //[ Inside the interface, the implementation still decides. //]
+  test: "the implementation refuses drafts the campaign does not allow", () =>
+    val path = Guest.freshShop()
+    val printed = Guest.run(path, probeProgram())
+
+    check("the budget starts whole", printed.contains("budget: 3000"))
+    check("an unknown label", printed.contains("unknown customer: Rejected: customer-9999 is not a customer"))
+    check("two offers for one customer", printed.contains("the same customer twice: Rejected:"))
+    check("more than the largest offer", printed.contains("over the largest offer: Rejected:"))
+    check("a minimum spend below the coupon", printed.contains("a minimum below the coupon: Rejected:"))
+    check("an offer without a reason", printed.contains("no reason: Rejected:"))
+    check("more than the budget", printed.contains("over the budget: Rejected: the offers add up to CHF 31.00"))
+    check("an offer the campaign allows", printed.contains("accepted: Saved 1 draft coupons"))
+    check("but not a second one for the same customer", printed.contains("a customer who already has a draft: Rejected:"))
+    check("what was saved is one draft and no coupon", DB.withConn(path, () => draftsAndCoupons()) == "1 draft, 0 active")
+
+  test: "a finished run can no longer save drafts", () =>
+    val path = Guest.freshShop()
+    val runId = DB.withConn(path, () => Campaigns.beginRun(1, "example"))
+    DB.withConn(path, () => Campaigns.finishRun(runId, "success", "done"))
+    val printed = Guest.runIn:
+      path
+      runId
+      inside("  val id = promotions.customers().get(0).id\n"
+        + "  println promotions.saveDrafts([new Offer(id, 300, 3000, \"late\")])\n")
+    check("the draft is refused", printed.contains("Rejected: this run has finished"))
+
+private def draftsAndCoupons(): String receives conn =
+  val row = conn.execute("""
+    SELECT (SELECT COUNT(*) FROM coupons WHERE status = 'draft'),
+           (SELECT COUNT(*) FROM coupons WHERE status = 'active' AND campaign_id IS NOT NULL)
+  """).fetchone()
+  "\{row[0].asInt} draft, \{row[1].asInt} active"

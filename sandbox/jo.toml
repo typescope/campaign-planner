@@ -1,0 +1,31 @@
+jo = "0.13"
+
+# What the AI-generated program is compiled against: the interface in `api`,
+# and nothing else. The implementation in `runtime` is linked in at the end, so
+# the program runs with it but cannot name it.
+
+[module.api]
+kind = "lib"
+platform = "python"
+src = ["API.jo"]
+
+[module.runtime]
+kind = "lib"
+platform = "python"
+enable-ffi = true
+src = ["Runtime.jo", "PromotionsImpl.jo"]
+depth = 2
+modules = ["api"]
+packages = [{ name = "harpe", version = "0.9" }]
+
+[module.guest]
+kind = "app"
+platform = "python"
+src = ["Task.jo"]
+depth = 2
+modules = ["api", { id = "runtime", link = true }]
+
+links = [
+  { from = "jo.main", to = "sandbox.runtime.main" },
+  { from = "sandbox.api.runTask", to = "sandbox.guest.runTask" },
+]

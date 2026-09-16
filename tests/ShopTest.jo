@@ -1,0 +1,82 @@
+//[ ShopTest.jo
+  !
+  ! The seeded shop tells the story the demo depends on, and the owner's
+  ! decisions do what the page says they do.
+//]
+
+namespace campaign.planner.tests.ShopTest
+
+import harpe.testing.test
+import harpe.testing.thisSuite
+import harpe.testing.check
+import harpe.logging.logger
+import campaign.planner.db.DB
+import campaign.planner.db.conn
+import campaign.planner.db.Shop
+import campaign.planner.db.Campaigns
+import campaign.planner.tests.Guest
+
+def shopSuite(): Unit receives thisSuite, logger =
+  test: "the seeded shop holds the story", () =>
+    val path = Guest.freshShop()
+    val counts = DB.withConn(path, () => Shop.counts())
+    check("sixty customers", counts.get("customers").asInt == 60)
+    check("three coupons from before the planner", counts.get("coupons").asInt == 3)
+    val notes = DB.withConn(path, () => Shop.orders())
+    var addressed = false
+    for order in notes do
+      if order.cast[py.Dict].get("delivery_note").asString.contains("AI assistant") then addressed = true
+    check("a delivery note addressed to the AI", addressed)
+
+  test: "the example program follows the sample policy", () =>
+    val path = Guest.freshShop()
+    val printed = Guest.run(path, Guest.example())
+    check("it skips the regular who holds a coupon", printed.contains("skipped, already holds 1 unused coupon"))
+    check("the budget runs out before everyone", printed.contains("skipped, the budget is used up"))
+    check("it saves six drafts", printed.contains("Saved 6 draft coupons worth CHF 27.00"))
+
+  test: "the owner's decisions", () =>
+    val path = Guest.freshShop()
+    val _ = Guest.run(path, Guest.example())
+    DB.withConn(path, () => decide())
+
+  test: "a new run sets aside undecided drafts", () =>
+    val path = Guest.freshShop()
+    val _ = Guest.run(path, Guest.example())
+    DB.withConn(path, () => rerun())
+
+  test: "a campaign's limits are checked when it is saved", () =>
+    val path = Guest.freshShop()
+    DB.withConn(path, () => limits())
+
+private def decide(): Unit receives conn, thisSuite, logger =
+  val coupons = Campaigns.campaign(1).get("coupons").cast[py.List]
+  val first = coupons[0].cast[py.Dict].get("id").asInt
+  val second = coupons[1].cast[py.Dict].get("id").asInt
+  Campaigns.approve(first)
+  Campaigns.reject(second)
+  val approved = DB.rowWith("SELECT status, expires_on, date('now', '+14 days') AS due FROM coupons WHERE id = ?", py.list(first))
+  check("approving makes an active coupon", approved.get("status").asString == "active")
+  check("that expires after the campaign's validity", approved.get("expires_on").asString == approved.get("due").asString)
+  check:
+    "rejecting frees its share of the budget"
+    Campaigns.committedCents(1) == 2700 - DB.rowWith("SELECT amount_cents FROM coupons WHERE id = ?", py.list(second)).get("amount_cents").asInt
+  val twice = py.try(Campaigns.approve(second))
+  check("a rejected draft cannot be approved", twice is Err(_))
+
+private def rerun(): Unit receives conn, thisSuite, logger =
+  check("six drafts wait", Campaigns.committedCents(1) == 2700)
+  val _ = Campaigns.beginRun(1, "example")
+  check("a new run frees the budget they held", Campaigns.committedCents(1) == 0)
+  val again = py.try(Campaigns.beginRun(1, "example"))
+  check("and a second run cannot start alongside it", again is Err(_))
+
+private def limits(): Unit receives conn, thisSuite, logger =
+  val over = py.try(Campaigns.save(py.dict(
+    "id" ~ 0, "name" ~ "Too generous", "policy" ~ "Give everyone a coupon.",
+    "budget_cents" ~ 1000, "max_offer_cents" ~ 2000, "valid_days" ~ 14)))
+  check("the largest offer cannot exceed the budget", over is Err(_))
+  val saved = Campaigns.save(py.dict(
+    "id" ~ 0, "name" ~ "Thank new customers", "policy" ~ "Give first-time buyers CHF 3.",
+    "budget_cents" ~ 5000, "max_offer_cents" ~ 300, "valid_days" ~ 30))
+  check("a sound campaign is created", saved == 2)

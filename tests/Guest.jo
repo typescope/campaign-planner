@@ -1,0 +1,48 @@
+//[ Guest.jo
+  !
+  ! Running a program the way the app does: through `runCode`, against the
+  ! sandbox in this checkout and a shop of the test's own.
+//]
+
+namespace campaign.planner.tests.Guest
+
+import harpe.ffi.os
+import harpe.util.File
+import harpe.tools.RunCodeTool
+import harpe.logging.logger
+import campaign.planner.db.DB
+import campaign.planner.db.conn
+import campaign.planner.db.Campaigns
+
+//[ A freshly seeded shop in a directory of its own, and the path to it. //]
+def freshShop(): String =
+  val dir = py.module("tempfile").mkdtemp(prefix = "cp-shop-").asString
+  val path = os.path.join(dir, "shop.db")
+  DB.initialize(path)
+  path
+
+//[ What `code` printed, or the compiler's complaint, in a new run of the
+  ! seeded campaign that is open while the program runs, as it is in the app.
+//]
+def run(path: String, code: String): String receives logger =
+  val runId = DB.withConn(path, () => Campaigns.beginRun(1, "example"))
+  val printed = runIn(path, runId, code)
+  DB.withConn(path, () => Campaigns.finishRun(runId, "success", printed))
+  printed
+
+def runIn(path: String, runId: Int, code: String): String receives logger =
+  val sandbox = os.path.join(os.path.abspath("."), "sandbox")
+  val tool = RunCodeTool(sandbox, approvalDeadline = 30, runTimeout = 60)
+  val env = Map:
+    "CAMPAIGN_DB"  ~ path
+    "CAMPAIGN_ID"  ~ "1"
+    "CAMPAIGN_RUN" ~ runId.toString
+  tool.run(code, env).result
+
+//[ A program with the header every generated program starts with. //]
+def program(body: String): String =
+  "namespace sandbox.guest\n\nimport sandbox.api.*\n\n" + body
+
+def example(): String =
+  File.read(os.path.join(os.path.abspath("."), "examples", "late-regulars.jo"))
+

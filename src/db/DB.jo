@@ -1,0 +1,86 @@
+//[ DB.jo
+  !
+  ! Opening the shop database, building it, and running a statement on the
+  ! connection the current operation is using.
+  !
+  ! The connection is a context parameter. An entry point opens one with
+  ! `DB.withConn(path, () => …)`, and every store asks for it with
+  ! `receives conn`, so several stores can share one transaction.
+//]
+
+namespace campaign.planner.db
+
+//[ The connection this operation runs on. //]
+param conn: py.Dynamic
+
+section DB
+
+  //[ A connection with rows addressable by name, foreign keys enforced, WAL so
+    ! a reader is not blocked by a write, and a busy timeout so an agent run and
+    ! a request do not collide.
+  //]
+  def open(path: String): py.Dynamic =
+    val sqlite = py.module("sqlite3")
+    val connection = sqlite.connect(path, timeout = 10.0)
+    connection.row_factory = sqlite.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA journal_mode = WAL")
+    connection.execute("PRAGMA busy_timeout = 10000")
+    connection
+
+  //[ Run `work` on a connection of its own, and close it whatever happens. //]
+  def withConn[T](path: String, work: () => T receives conn): T =
+    val connection = open(path)
+    val outcome = py.try(with conn = connection in work())
+    connection.close()
+    match outcome
+    case Ok(value) => value
+    case Err(error) => abort error.message
+
+  //[ Build the database and make sure it has a shop in it. Called once, from
+    ! `Main`, before anything serves.
+  //]
+  def initialize(path: String): Unit =
+    Schema.initialize(path)
+    withConn(path, () => prepare())
+
+  private def prepare(): Unit receives conn =
+    Seed.apply()
+    Campaigns.failStaleRuns()
+
+  //[ Every row of `sql`, each one a plain dict. //]
+  def rows(sql: String): py.List receives conn = rowsWith(sql, py.list())
+
+  def rowsWith(sql: String, params: py.List): py.List receives conn =
+    val result = py.list()
+    for row in py.iter(conn.execute(sql, params).fetchall()) do
+      result.append(py.module("builtins").dict(row))
+    result
+
+  //[ The first row of `sql` as a dict, or an empty dict when there is none. //]
+  def rowWith(sql: String, params: py.List): py.Dict receives conn =
+    val found = rowsWith(sql, params)
+    if found.size == 0 then py.dict() else found[0].cast[py.Dict]
+
+  //[ Run one statement and report how many rows it touched. //]
+  def execute(sql: String, params: py.List): Int receives conn =
+    conn.execute(sql, params).rowcount.asInt
+
+  //[ Run one insert and report the id it produced. //]
+  def insert(sql: String, params: py.List): Int receives conn =
+    conn.execute(sql, params).lastrowid.asInt
+
+  //[ Run `write` inside one immediate transaction, and roll back when it is
+    ! refused, so no write lock is left behind for the next request.
+  //]
+  def inTransaction[T](write: () => T): T receives conn =
+    conn.execute("BEGIN IMMEDIATE")
+    val outcome = py.try(write())
+    match outcome
+    case Ok(value) =>
+      conn.commit()
+      value
+    case Err(error) =>
+      conn.rollback()
+      abort error.message
+end

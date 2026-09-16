@@ -1,0 +1,58 @@
+name: CI
+
+# Every check here resolves the published packages that jo.toml pins, never
+# sources beside it, so each one is answerable at every commit and all of them
+# gate a pull request.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  JO_REGISTRY_URL: https://pkg.typescope.ai
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The installed `jo` launcher runs jo.jar on the JVM, so a JDK is required.
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: liberica
+          java-version: 17
+
+      # Pinned rather than taken from the runner image, so a red build means the
+      # agent broke and never that the image moved to a Python our requirements
+      # have no wheel for yet.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Jo
+        run: |
+          curl -sSf https://jo-lang.org/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install requirements
+        run: pip install -r requirements.txt
+
+      # The program the AI writes is compiled against this one spec.
+      - name: Build the sandbox guest
+        run: jo build --spec sandbox/jo.toml guest
+
+      - name: Build the agent
+        run: jo build agent
+
+      # Compiles guest programs against a copy of the sandbox and runs them, so
+      # it exercises the capability boundary itself. No API key and no network.
+      - name: Test
+        run: jo run tests

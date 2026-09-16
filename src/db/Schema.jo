@@ -1,0 +1,106 @@
+//[ Schema.jo
+  !
+  ! Every table in `data/shop.db`, in one place.
+  !
+  ! The first four tables are the shop: what an ordinary online shop keeps,
+  ! personal details included. The last three are the campaign planner's. The
+  ! AI-generated program reaches none of them directly. It sees only what
+  ! `sandbox/PromotionsImpl.jo` reads out of them.
+//]
+
+namespace campaign.planner.db
+
+import harpe.ffi.os
+import harpe.util.File
+
+section Schema
+
+  //[ Create every table and index that is missing. Safe to run on every start. //]
+  def initialize(path: String): Unit =
+    File.ensureDir(os.path.dirname(path))
+    val conn = DB.open(path)
+    conn.executescript("""
+      CREATE TABLE IF NOT EXISTS products (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        price_cents INTEGER NOT NULL CHECK(price_cents > 0)
+      );
+      -- What customers gave the shop so it could deliver their orders.
+      CREATE TABLE IF NOT EXISTS customers (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL UNIQUE,
+        phone TEXT NOT NULL DEFAULT '',
+        street TEXT NOT NULL,
+        postcode TEXT NOT NULL,
+        city TEXT NOT NULL,
+        created_on TEXT NOT NULL
+      );
+      -- `delivery_note` is free text the customer typed at checkout.
+      CREATE TABLE IF NOT EXISTS orders (
+        id INTEGER PRIMARY KEY,
+        customer_id INTEGER NOT NULL REFERENCES customers(id),
+        placed_on TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('paid','refunded')),
+        subtotal_cents INTEGER NOT NULL CHECK(subtotal_cents >= 0),
+        delivery_note TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX IF NOT EXISTS orders_customer ON orders(customer_id, placed_on);
+      CREATE TABLE IF NOT EXISTS order_items (
+        id INTEGER PRIMARY KEY,
+        order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+        product_id INTEGER NOT NULL REFERENCES products(id),
+        quantity INTEGER NOT NULL CHECK(quantity > 0),
+        unit_price_cents INTEGER NOT NULL CHECK(unit_price_cents >= 0)
+      );
+      CREATE INDEX IF NOT EXISTS order_items_order ON order_items(order_id);
+
+      -- A campaign is a policy the owner wrote, plus the limits the
+      -- implementation enforces whatever the policy says.
+      CREATE TABLE IF NOT EXISTS campaigns (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        policy TEXT NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'CHF',
+        budget_cents INTEGER NOT NULL CHECK(budget_cents > 0),
+        max_offer_cents INTEGER NOT NULL CHECK(max_offer_cents > 0),
+        valid_days INTEGER NOT NULL CHECK(valid_days BETWEEN 1 AND 365),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      -- One attempt at a campaign: the AI writing programs, or the example
+      -- program running on its own.
+      CREATE TABLE IF NOT EXISTS runs (
+        id INTEGER PRIMARY KEY,
+        campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+        mode TEXT NOT NULL CHECK(mode IN ('agent','example')),
+        status TEXT NOT NULL CHECK(status IN ('running','success','failed')),
+        summary TEXT NOT NULL DEFAULT '',
+        started_at TEXT NOT NULL,
+        finished_at TEXT NOT NULL DEFAULT ''
+      );
+      -- A draft becomes a coupon only when the owner approves it. `expires_on`
+      -- is empty for a draft, and for a coupon that never expires.
+      CREATE TABLE IF NOT EXISTS coupons (
+        id INTEGER PRIMARY KEY,
+        code TEXT NOT NULL UNIQUE,
+        customer_id INTEGER NOT NULL REFERENCES customers(id),
+        campaign_id INTEGER REFERENCES campaigns(id) ON DELETE SET NULL,
+        run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,
+        amount_cents INTEGER NOT NULL CHECK(amount_cents > 0),
+        minimum_spend_cents INTEGER NOT NULL,
+        status TEXT NOT NULL
+          CHECK(status IN ('draft','rejected','superseded','active','used')),
+        reason TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        decided_at TEXT NOT NULL DEFAULT '',
+        expires_on TEXT NOT NULL DEFAULT '',
+        used_on TEXT NOT NULL DEFAULT '',
+        CHECK(minimum_spend_cents >= amount_cents)
+      );
+      CREATE INDEX IF NOT EXISTS coupons_customer ON coupons(customer_id, status);
+      CREATE INDEX IF NOT EXISTS coupons_campaign ON coupons(campaign_id, status);
+    """)
+    conn.commit()
+    conn.close()
+end

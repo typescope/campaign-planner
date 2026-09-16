@@ -1,0 +1,44 @@
+namespace sandbox.api
+
+import jo.IO.stdout
+
+// Dates are ISO strings such as "2026-09-16". `daysAgo` counts days before
+// today, so subtracting two gives the days between purchases. Money is integer
+// cents. Purchases are sorted oldest first.
+class Purchase(date: String, daysAgo: Int, subtotalCents: Int)
+
+// `id` is a stand-in label such as "customer-7", valid for this run only. The
+// shop's names, emails, addresses and delivery notes have no field here.
+class Customer(id: String, purchases: List[Purchase])
+
+// An unused coupon the customer already holds. `daysLeft` is 0 on its last day
+// and None when it never expires.
+class Coupon(amountCents: Int, minimumSpendCents: Int, daysLeft: Option[Int])
+
+// `availableCents` is the campaign budget minus every draft, active and used
+// coupon the campaign has already produced.
+class Budget(currency: String, availableCents: Int, maxOfferCents: Int)
+
+class Offer(customerId: String, amountCents: Int, minimumSpendCents: Int, reason: String)
+
+//[ Everything the program can do.
+  !
+  ! It can read purchase histories and open coupons, and save draft coupons for
+  ! the owner to review. It cannot approve a draft, send one, or reach a
+  ! customer's name, a file, the database, or the network.
+//]
+interface Promotions
+  def today(): String
+  def budget(): Budget
+  // Every customer with at least one paid order.
+  def customers(): List[Customer]
+  // Fails for a label that is not in customers().
+  def openCoupons(customerId: String): List[Coupon]
+  // Saves every offer as a draft for the owner, or none of them. Returns what
+  // was saved, or starts with "Rejected:" and says why.
+  def saveDrafts(offers: List[Offer]): String
+end
+
+param promotions: Promotions
+
+defer def runTask(): Unit receives stdout, promotions

@@ -1,0 +1,118 @@
+//[ Planner.jo
+  !
+  ! Running a campaign: the AI writing programs against `Promotions`, or the
+  ! checked-in example program running without an AI.
+//]
+
+namespace campaign.planner
+
+import harpe.ffi.os
+import harpe.ffi.threading
+import harpe.util.File
+import harpe.Model
+import harpe.Agent
+import harpe.Interact
+import harpe.Approvals
+import harpe.context.FullContext
+import harpe.turns.TurnResult
+import harpe.turns.TurnEvent
+import harpe.tools.RunCodeTool
+import harpe.tools.SkillTools
+import harpe.logging.*
+import campaign.planner.db.DB
+import campaign.planner.db.Campaigns
+
+class Planner(home: String, databasePath: String, brain: Option[Model])
+  private val lock = threading.Lock()
+  private val runCode = RunCodeTool(os.path.join(home, "sandbox"), approvalDeadline = 30, runTimeout = 60)
+
+  //[ Whether a model is configured, so the page can say why the AI button is
+    ! off rather than fail when pressed.
+  //]
+  def hasModel: Bool = brain is Some(_)
+
+  def logsDir: String = os.path.join(home, "logs")
+
+  //[ One run of `campaignId`, start to finish. Runs one at a time, because a
+    ! run spends a budget the next run must see.
+  //]
+  def run(campaignId: Int, mode: String): py.Dict =
+    if mode != "agent" && mode != "example" then return failed(0, "Unknown run mode.")
+    if mode == "agent" && !hasModel then
+      return failed(0, "Set a model provider key in .env to let the AI write programs, or run the example program.")
+    if !lock.acquire(blocking = false).asBool then
+      return failed(0, "Another run is in progress. Wait for it to finish.")
+    val outcome = py.try(attempt(campaignId, mode))
+    lock.release()
+    match outcome
+    case Ok(value) => value
+    case Err(error) => failed(0, error.message)
+
+  private def attempt(campaignId: Int, mode: String): py.Dict =
+    val runId = DB.withConn(databasePath, () => Campaigns.beginRun(campaignId, mode))
+    File.ensureDir(logsDir)
+    val log = new JsonlLogger(os.path.join(logsDir, "run-\{runId}.jsonl"))
+    val env = Map:
+      "CAMPAIGN_DB"  ~ databasePath
+      "CAMPAIGN_ID"  ~ campaignId.toString
+      "CAMPAIGN_RUN" ~ runId.toString
+    val result = py.try:
+      Logging.withLogger: log, () =>
+        if mode == "agent" then ask(campaignId, env) else example(env)
+    log.close()
+    match result
+    case Ok(report ~ ok) =>
+      DB.withConn(databasePath, () => Campaigns.finishRun(runId, if ok then "success" else "failed", report))
+      py.dict("ok" ~ ok, "run_id" ~ runId, "report" ~ report)
+    case Err(error) =>
+      DB.withConn(databasePath, () => Campaigns.finishRun(runId, "failed", error.message))
+      failed(runId, error.message)
+
+  //[ The AI reads the policy and writes programs until it has saved drafts, or
+    ! explains why it could not.
+  //]
+  private def ask(campaignId: Int, env: Map[String, String]): String ~ Bool receives logger =
+    val campaign = DB.withConn(databasePath, () => Campaigns.campaign(campaignId))
+    val request = "Campaign: \{campaign.get("name").asString}\n\n"
+      + "The owner's policy:\n\n\{campaign.get("policy").asString}"
+    val context = new FullContext:
+      baseSystem = File.read(os.path.join(home, "prompts", "plan.md"))
+      initial = []
+    val model = match brain
+      case Some(value) => value
+      case None => abort "No model is configured."
+    val answer = Agent.ask:
+      request
+      brain = model
+      tools = SkillTools.toolset(os.path.join(home, "skills")) ++ runCode.toolset(env)
+      context = context
+      interact = new QuietInteract
+      maxToolRounds = 15
+      maxRetries = 2
+    match answer.result
+    case TurnResult.Success => answer.finalText ~ true
+    case TurnResult.Interrupted => "The run was interrupted." ~ false
+    case TurnResult.Failed(detail) => detail ~ false
+
+  //[ The checked-in program for the sample policy, compiled and run through
+    ! the same path as a program the AI wrote.
+  //]
+  private def example(env: Map[String, String]): String ~ Bool receives logger =
+    val code = File.read(os.path.join(home, "examples", "late-regulars.jo"))
+    val outcome = runCode.run(code, env)
+    outcome.result ~ outcome.summary.startsWith("ran")
+
+  private def failed(runId: Int, message: String): py.Dict =
+    py.dict("ok" ~ false, "run_id" ~ runId, "report" ~ message)
+end
+
+//[ Nothing in a run asks a person anything: its only output is drafts. //]
+class QuietInteract
+  view Interact
+  def cancelled: Bool = false
+  def pause(seconds: Float): Bool =
+    py.module("time").sleep(py.dynamic(seconds))
+    false
+  def approve(title: String, detail: String): Approvals.Decision = Approvals.Cancelled
+  def emit(event: TurnEvent): Unit = pass
+end

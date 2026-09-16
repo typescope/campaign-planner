@@ -1,0 +1,208 @@
+//[ Campaigns.jo
+  !
+  ! Campaigns, the runs that work on them, and the drafts the owner decides.
+  !
+  ! The owner is the only one who can turn a draft into a coupon. The
+  ! AI-generated program can only create drafts, through
+  ! `sandbox/PromotionsImpl.jo`.
+//]
+
+namespace campaign.planner.db
+
+import harpe.ffi.os
+import harpe.util.File
+
+section Campaigns
+
+  //[ The policy the seeded campaign opens with. //]
+  def samplePolicy: String =
+    "Find regulars who are late for their usual order. A regular has at least three "
+      + "paid orders. Their usual gap is the average number of days between their orders, "
+      + "and they are late once one and a half usual gaps have passed since their last order.\n\n"
+      + "Offer each late regular a coupon worth a tenth of their average order, rounded down "
+      + "to whole francs, and at least CHF 3. The minimum spend is their average order, "
+      + "rounded up to whole francs.\n\n"
+      + "Skip anyone who already holds an unused coupon.\n\n"
+      + "If the budget cannot cover everyone, the customers furthest behind their usual "
+      + "schedule, measured in usual gaps, go first."
+
+  def campaigns(): py.List receives conn = DB.rows("""
+    SELECT m.*,
+           (SELECT COUNT(*) FROM coupons k WHERE k.campaign_id = m.id AND k.status = 'draft') AS drafts
+    FROM campaigns m ORDER BY m.id
+  """)
+
+  //[ One campaign with its budget, its coupons and its runs: everything the
+    ! campaign page shows.
+  //]
+  def campaign(id: Int): py.Dict receives conn =
+    val found = DB.rowWith("SELECT * FROM campaigns WHERE id = ?", py.list(id))
+    if found.size == 0 then abort "no such campaign"
+    found.set("committed_cents", committedCents(id))
+    found.set("coupons", coupons(id))
+    found.set("runs", DB.rowsWith("SELECT * FROM runs WHERE campaign_id = ? ORDER BY id DESC LIMIT 20", py.list(id)))
+    found
+
+  //[ Drafts, approved, used and rejected coupons from this campaign, each with
+    ! figures the implementation computes from the order history. The owner
+    ! checks the AI's reason against these, not the other way round.
+  //]
+  private def coupons(id: Int): py.List receives conn =
+    DB.rowsWith:
+      """
+      SELECT k.id, k.code, k.amount_cents, k.minimum_spend_cents, k.status, k.reason,
+             k.run_id, k.created_at, k.decided_at, k.expires_on,
+             c.id AS customer_id, c.name AS customer_name, c.email, c.city,
+             s.orders, s.last_ago, s.average_cents, s.usual_gap
+      FROM coupons k
+      JOIN customers c ON c.id = k.customer_id
+      LEFT JOIN (
+        SELECT customer_id, COUNT(*) AS orders,
+               CAST(julianday(date('now')) - julianday(MAX(placed_on)) AS INTEGER) AS last_ago,
+               CAST(AVG(subtotal_cents) AS INTEGER) AS average_cents,
+               CASE WHEN COUNT(*) > 1
+                    THEN CAST(ROUND((julianday(MAX(placed_on)) - julianday(MIN(placed_on)))
+                                    / (COUNT(*) - 1)) AS INTEGER)
+                    ELSE 0 END AS usual_gap
+        FROM orders WHERE status = 'paid' GROUP BY customer_id
+      ) s ON s.customer_id = c.id
+      WHERE k.campaign_id = ? AND k.status != 'superseded'
+      ORDER BY CASE k.status WHEN 'draft' THEN 0 ELSE 1 END, k.id
+      """
+      py.list(id)
+
+  //[ Drafts awaiting the owner, approved coupons, and used ones. //]
+  def committedCents(id: Int): Int receives conn =
+    conn
+      .execute:
+         """
+         SELECT COALESCE(SUM(amount_cents), 0) FROM coupons
+         WHERE campaign_id = ? AND status IN ('draft','active','used')
+         """
+         py.list(id)
+      .fetchone()[0].asInt
+
+  //[ Create a campaign when `id` is 0, otherwise change one. //]
+  def save(body: py.Dict): Int receives conn =
+    val id = body.get("id", 0).asInt
+    val name = body.get("name", "").asString.trim
+    val policy = body.get("policy", "").asString.trim
+    val budget = body.get("budget_cents", 0).asInt
+    val maxOffer = body.get("max_offer_cents", 0).asInt
+    val validDays = body.get("valid_days", 0).asInt
+    if name == "" then abort "A campaign needs a name."
+    if policy == "" then abort "A campaign needs a policy."
+    if policy.size > 4000 then abort "Keep the policy under 4000 characters."
+    if budget < 100 then abort "The budget must be at least 1.00."
+    if maxOffer < 100 || maxOffer > budget then
+      abort "The largest offer must be at least 1.00 and no more than the budget."
+    if validDays < 1 || validDays > 365 then abort "Coupons must be valid for 1 to 365 days."
+    DB.inTransaction: () =>
+      if id == 0 then
+        DB.insert:
+          """
+          INSERT INTO campaigns(name, policy, currency, budget_cents, max_offer_cents, valid_days,
+                                created_at, updated_at)
+          VALUES(?, ?, 'CHF', ?, ?, ?, datetime('now'), datetime('now'))
+          """
+          py.list(name, policy, budget, maxOffer, validDays)
+      else
+        val changed = DB.execute:
+          """
+          UPDATE campaigns SET name = ?, policy = ?, budget_cents = ?, max_offer_cents = ?,
+                               valid_days = ?, updated_at = datetime('now')
+          WHERE id = ?
+          """
+          py.list(name, policy, budget, maxOffer, validDays, id)
+        if changed == 0 then abort "no such campaign"
+        id
+
+  //[ Open a run. Drafts still waiting from an earlier run are set aside first,
+    ! so a new run starts from the whole remaining budget. Refused while another
+    ! run of this campaign is in progress.
+  //]
+  def beginRun(campaignId: Int, mode: String): Int receives conn =
+    DB.inTransaction: () =>
+      val campaign = DB.rowWith("SELECT id FROM campaigns WHERE id = ?", py.list(campaignId))
+      if campaign.size == 0 then abort "no such campaign"
+      val running = DB.rowWith:
+        "SELECT id FROM runs WHERE campaign_id = ? AND status = 'running'"
+        py.list(campaignId)
+      if running.size > 0 then abort "This campaign already has a run in progress."
+      val _ = DB.execute:
+        "UPDATE coupons SET status = 'superseded' WHERE campaign_id = ? AND status = 'draft'"
+        py.list(campaignId)
+      DB.insert:
+        "INSERT INTO runs(campaign_id, mode, status, started_at) VALUES(?, ?, 'running', datetime('now'))"
+        py.list(campaignId, mode)
+
+  def finishRun(id: Int, status: String, summary: String): Unit receives conn =
+    val _ = DB.inTransaction: () =>
+      DB.execute:
+        "UPDATE runs SET status = ?, summary = ?, finished_at = datetime('now') WHERE id = ?"
+        py.list(status, summary, id)
+
+  def run(id: Int): py.Dict receives conn =
+    val found = DB.rowWith("SELECT * FROM runs WHERE id = ?", py.list(id))
+    if found.size == 0 then abort "no such run"
+    found
+
+  //[ A run left `running` belongs to a process that is gone. Called once at
+    ! startup, before anything serves.
+  //]
+  def failStaleRuns(): Unit receives conn =
+    val _ = DB.execute:
+      """
+      UPDATE runs SET status = 'failed', finished_at = datetime('now'),
+        summary = 'The app stopped while this run was in progress.'
+      WHERE status = 'running'
+      """
+      py.list()
+    conn.commit()
+
+  //[ The owner's decision on one draft. Approving makes it a single-use coupon
+    ! that expires after the campaign's validity.
+  //]
+  def approve(couponId: Int): Unit receives conn =
+    val _ = DB.inTransaction: () =>
+      val changed = DB.execute:
+        """
+        UPDATE coupons SET status = 'active', decided_at = datetime('now'),
+          expires_on = date('now', '+' || (SELECT valid_days FROM campaigns m
+                                           WHERE m.id = coupons.campaign_id) || ' days')
+        WHERE id = ? AND status = 'draft'
+        """
+        py.list(couponId)
+      if changed == 0 then abort "Only a draft waiting for review can be approved."
+      changed
+
+  def reject(couponId: Int): Unit receives conn =
+    val _ = DB.inTransaction: () =>
+      val changed = DB.execute:
+        "UPDATE coupons SET status = 'rejected', decided_at = datetime('now') WHERE id = ? AND status = 'draft'"
+        py.list(couponId)
+      if changed == 0 then abort "Only a draft waiting for review can be rejected."
+      changed
+
+  //[ Every program a run compiled, in order, read from the run's log: the
+    ! code, whether it compiled, and what it printed.
+  //]
+  def programs(logsDir: String, runId: Int): py.List =
+    val path = os.path.join(logsDir, "run-\{runId}.jsonl")
+    val result = py.list()
+    if !File.exists(path) then return result
+    val json = py.module("json")
+    for line in File.read(path).split("\n") do
+      if line.trim != "" then
+        val entry = json.loads(line).cast[py.Dict]
+        if entry.get("category", "").asString == "harpe.tools.runCode" then
+          result.append: py.dict:
+            "time"         ~ entry.get("time", "")
+            "code"         ~ entry.get("code", "")
+            "compiled"     ~ entry.get("compiled", false)
+            "compileError" ~ entry.get("compileError", "")
+            "output"       ~ entry.get("output", "")
+            "exitCode"     ~ entry.get("exitCode", py.none)
+            "timedOut"     ~ entry.get("timedOut", false)
+    result
+end
