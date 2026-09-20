@@ -1,6 +1,6 @@
 name: CI
 
-# Every check here resolves the published packages that jo.toml pins, never
+# Every check here resolves the published packages recorded in the lock files, never
 # sources beside it, so each one is answerable at every commit and all of them
 # gate a pull request.
 
@@ -37,11 +37,10 @@ jobs:
         with:
           python-version: '3.12'
 
-      # Pinned to the compiler the published harpe 0.9 package loads with. Jo
-      # 0.13.4 fails to read it, so the latest release is not safe to take.
+      # Harpe 0.10.1 requires Jo 0.13.5.
       - name: Install Jo
         run: |
-          curl -sSf https://jo-lang.org/install.sh | JO_VERSION=0.13.0 sh
+          curl -sSf https://jo-lang.org/install.sh | JO_VERSION=0.13.5 sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install requirements

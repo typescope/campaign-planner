@@ -1,0 +1,92 @@
+namespace campaign.planner.tests.ServerTest
+
+import harpe.ffi.os
+import harpe.server.Application
+import harpe.testing.test
+import harpe.testing.thisSuite
+import harpe.testing.check
+import campaign.planner.Server
+import campaign.planner.tests.Guest
+
+// Exercise the application's WSGI boundary without opening a network socket.
+private class Reply(status: String, headers: py.Dict, body: String)
+  def json: py.Dict = py.module("json").loads(body).cast[py.Dict]
+end
+
+private class Client
+  private val server = new Server(os.path.abspath("."), Guest.freshShop(), None)
+  private val application = new Application(routes = [], fallback = () => server.route())
+
+  def send(method: String, path: String, body: String = "", mime: String = "application/json"): Reply =
+    val bytes = py.dynamic(body).encode()
+    val environ = py.dict()
+    py.module("wsgiref.util").setup_testing_defaults(environ)
+    environ.set("REQUEST_METHOD", method)
+    environ.set("PATH_INFO", path)
+    environ.set("CONTENT_TYPE", mime)
+    environ.set("CONTENT_LENGTH", py.module("builtins").len(bytes).asInt.toString)
+    environ.set("wsgi.input", py.module("io").BytesIO(bytes))
+    val statuses = py.list()
+    val sent = py.dict()
+    val startResponse = (status: py.Dynamic, headers: py.Dynamic) =>
+      statuses.append(status)
+      py.dynamic(sent).update(headers)
+      (chunk: py.Dynamic) => pass
+    val chunks = application.wsgi()(py.dynamic(environ), py.dynamic(startResponse))
+    val body = py.dynamic("").encode().join(chunks).decode().asString
+    val close = py.module("builtins").getattr(chunks, "close", py.none())
+    if !py.isNone(close) then py.call(close)
+    new Reply(statuses[0].asString, sent, body)
+end
+
+def serverSuite(): Unit receives thisSuite =
+  test: "the shop's routes return JSON through WSGI", () =>
+    val client = new Client
+    val snapshot = client.send("GET", "/api/snapshot")
+    check("the snapshot is served", snapshot.status == "200 OK")
+    check("no model key is needed", !snapshot.json.get("has_model").asBool)
+    val campaign = client.send("GET", "/api/campaigns/1")
+    check("the campaign id is read from the path", campaign.json.get("campaign").get("id").asInt == 1)
+    for path ~ key in List("/api/customers" ~ "customers", "/api/orders" ~ "orders", "/api/coupons" ~ "coupons") do
+      val reply = client.send("GET", path)
+      check(path, reply.status == "200 OK" && reply.json.get(key).cast[py.List].size > 0)
+    val programs = client.send("GET", "/api/runs/999999/programs")
+    check("a run without a log has no programs", programs.json.get("programs").cast[py.List].size == 0)
+    for path in ["/missing", "/api/campaigns/1/extra", "/api/runs/1/extra"] do
+      check("unknown path: " + path, client.send("GET", path).status == "404 Not Found")
+
+  test: "assets are served inline with the right content types", () =>
+    val client = new Client
+    for path ~ mime in List("/" ~ "text/html", "/app.css" ~ "text/css", "/app.js" ~ "text/javascript") do
+      val reply = client.send("GET", path)
+      check(path, reply.status == "200 OK" && reply.body.size > 0)
+      val contentType = reply.headers.get("Content-Type").asString
+      check("the content type", contentType == mime + "; charset=utf-8"
+        || (path == "/app.js" && contentType == "application/javascript; charset=utf-8"))
+      check("the file is displayed inline", reply.headers.get("Content-Disposition").asString.startsWith("inline;"))
+      check("the length matches the file", reply.headers.get("Content-Length").asString
+        == py.module("builtins").len(py.dynamic(reply.body).encode()).asInt.toString)
+      check("the asset is not cached", reply.headers.get("Cache-Control").asString == "no-store")
+      check("the browser must not guess its type", reply.headers.get("X-Content-Type-Options").asString == "nosniff")
+
+  test: "JSON writes preserve campaign changes and report invalid requests", () =>
+    val client = new Client
+    val body = """
+      {"id": 0, "name": "Café regulars", "policy": "Thank returning customers.",
+       "budget_cents": 5000, "max_offer_cents": 300, "valid_days": 30}
+    """
+    val saved = client.send("POST", "/api/campaigns", body)
+    check("a campaign is saved", saved.status == "200 OK" && saved.json.get("ok").asBool)
+    val campaign = client.send("GET", "/api/campaigns/2")
+    check("UTF-8 is read intact", campaign.json.get("campaign").get("name").asString == "Café regulars")
+    for path in ["/api/campaigns", "/api/campaigns/1/run", "/api/coupons/approve", "/api/coupons/reject"] do
+      for invalid in ["", "{", "[]", "null"] do
+        val reply = client.send("POST", path, invalid)
+        check("invalid JSON: " + path, reply.status == "400 Bad Request")
+        check("the refusal is JSON", reply.json.get("error").asString == "Expected a JSON object.")
+      check("wrong media type: " + path, client.send("POST", path, "{}", "text/plain").status == "400 Bad Request")
+    val run = client.send("POST", "/api/campaigns/1/run", "{\"mode\":\"agent\"}")
+    check("the run endpoint reports the missing model", run.status == "200 OK" && !run.json.get("ok").asBool)
+    for path in ["/api/coupons/approve", "/api/coupons/reject"] do
+      check("invalid coupon: " + path, client.send("POST", path, "{\"id\":0}").status == "400 Bad Request")
+    check("an unknown run path is refused", client.send("POST", "/api/campaigns/1/extra", "{}").status == "404 Not Found")

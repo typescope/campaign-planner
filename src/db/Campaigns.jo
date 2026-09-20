@@ -200,14 +200,22 @@ section Campaigns
     for line in File.read(path).split("\n") do
       if line.trim != "" then
         val entry = json.loads(line).cast[py.Dict]
-        if entry.get("category", "").asString == "harpe.tools.runCode" then
+        val event = entry.get("event", "").asString
+        if event.startsWith("harpe.tools.runCode.") then
+          val fields = entry.get("fields").cast[py.Dict]
+          val compiled =
+            event == "harpe.tools.runCode.ran" || event == "harpe.tools.runCode.timedOut"
+              || event == "harpe.tools.runCode.approvalTimedOut"
+          val timedOut =
+            event == "harpe.tools.runCode.compileTimedOut" || event == "harpe.tools.runCode.timedOut"
+              || event == "harpe.tools.runCode.approvalTimedOut"
           result.append: py.dict:
             "time"         ~ entry.get("time", "")
-            "code"         ~ entry.get("code", "")
-            "compiled"     ~ entry.get("compiled", false)
-            "compileError" ~ entry.get("compileError", "")
-            "output"       ~ entry.get("output", "")
-            "exitCode"     ~ entry.get("exitCode", py.none)
-            "timedOut"     ~ entry.get("timedOut", false)
+            "code"         ~ fields.get("code", "")
+            "compiled"     ~ compiled
+            "compileError" ~ fields.get("compileError", "")
+            "output"       ~ fields.get("output", "")
+            "exitCode"     ~ fields.get("exitCode", py.none)
+            "timedOut"     ~ timedOut
     result
 end

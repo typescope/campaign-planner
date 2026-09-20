@@ -32,7 +32,7 @@ Only the owner turns a draft into a coupon.
 
 ## Run
 
-Requires Jo 0.13, Java 17+, and Python 3.10+.
+Requires Jo 0.13.5 or later, Java 17+, and Python 3.10+.
 
 ```sh
 git clone https://github.com/typescope/campaign-planner.git
@@ -101,7 +101,8 @@ The suite builds the sandbox and runs programs through the same `runCode` path
 as the app. It proves that a program reading a name, a delivery note, Python or
 the environment does not compile, and that a program inside the interface still
 cannot save a draft the campaign does not allow. It needs no API key and no
-network.
+network. It also checks the HTTP routes and program logs, including compile
+failures and timeouts.
 
 ## Layout
 

@@ -1,3 +1,4 @@
+# Jo's compatibility line omits patch versions; use Jo 0.13.5 or later.
 jo = "0.13"
 
 # What the AI-generated program is compiled against: the interface in `api`,
@@ -16,7 +17,7 @@ enable-ffi = true
 src = ["Runtime.jo", "PromotionsImpl.jo"]
 depth = 2
 modules = ["api"]
-packages = [{ name = "harpe", version = "0.9" }]
+packages = [{ name = "harpe", version = "0.10" }]
 
 [module.guest]
 kind = "app"

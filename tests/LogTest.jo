@@ -1,0 +1,53 @@
+namespace campaign.planner.tests.LogTest
+
+import harpe.ffi.os
+import harpe.util.File
+import harpe.logging.*
+import harpe.testing.test
+import harpe.testing.thisSuite
+import harpe.testing.check
+import campaign.planner.db.Campaigns
+import campaign.planner.tests.Guest
+
+def logSuite(): Unit receives thisSuite, logger =
+  test: "the Runs page reads actual successful and failed program logs", () =>
+    val path = Guest.freshShop()
+    val dir = os.path.dirname(path)
+    val log = new JsonlLogger(os.path.join(dir, "run-1.jsonl"))
+    val code = Guest.program("def runTask(): Unit receives IO.stdout, promotions =\n  println promotions.customers().size.toString\n")
+    val bad = Guest.program("def runTask(): Unit receives IO.stdout, promotions =\n  println promotions.customers().get(0).name\n")
+    Logging.withLogger: log, () =>
+      val _ = Guest.run(path, code)
+      val _ = Guest.run(path, bad)
+    log.close()
+    val programs = Campaigns.programs(dir, 1)
+    check("both attempts appear", programs.size == 2)
+    val ran = programs[0].cast[py.Dict]
+    check("the original code is shown", ran.get("code").asString == code)
+    check("the program compiled", ran.get("compiled").asBool)
+    check("the program succeeded", ran.get("exitCode").asInt == 0)
+    check("its output is shown", ran.get("output").asString.contains("60"))
+    check("it did not time out", !ran.get("timedOut").asBool)
+    val failed = programs[1].cast[py.Dict]
+    check("the compiler failure is shown", !failed.get("compiled").asBool)
+    check("the compiler's explanation is kept", failed.get("compileError").asString.contains("does not contain the member name"))
+
+  test: "timeouts and runtime failures have the right display status", () =>
+    val dir = os.path.dirname(Guest.freshShop())
+    File.write: os.path.join(dir, "run-1.jsonl"), """
+      {"time":"t1","event":"harpe.tools.runCode.compileTimedOut","fields":{"code":"compile timeout"},"context":[]}
+      {"time":"t2","event":"harpe.tools.runCode.timedOut","fields":{"code":"run timeout"},"context":[]}
+      {"time":"t3","event":"harpe.tools.runCode.approvalTimedOut","fields":{"code":"approval timeout"},"context":[]}
+      {"time":"t4","event":"harpe.tools.runCode.ran","fields":{"code":"runtime failure","exitCode":1,"output":"failed"},"context":[]}
+      {"time":"t5","event":"harpe.turn.answered","fields":{},"context":[]}
+    """
+    val programs = Campaigns.programs(dir, 1)
+    check("only program attempts appear", programs.size == 4)
+    val compile = programs[0].cast[py.Dict]
+    check("a compile timeout never ran", !compile.get("compiled").asBool && compile.get("timedOut").asBool)
+    for index in [1, 2] do
+      val timed = programs[index].cast[py.Dict]
+      check("a runtime timeout compiled first", timed.get("compiled").asBool && timed.get("timedOut").asBool)
+    val failed = programs[3].cast[py.Dict]
+    check("a runtime failure compiled", failed.get("compiled").asBool && failed.get("exitCode").asInt == 1)
+    check("it was not a timeout", !failed.get("timedOut").asBool)
