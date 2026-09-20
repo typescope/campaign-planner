@@ -19,6 +19,8 @@ import harpe.testing.suite
 import harpe.testing.thisSuite
 import campaign.planner.tests.ShopTest
 import campaign.planner.tests.BoundaryTest
+import campaign.planner.tests.ServerTest
+import campaign.planner.tests.LogTest
 
 def main(): Unit receives stdout =
   Logging.withLogger(Logging.discard, () => run())
@@ -33,3 +35,5 @@ private def run(): Unit receives stdout, logger =
 private def suites(): Unit receives thisSuite, logger =
   suite: "shop", () => ShopTest.shopSuite()
   suite: "boundary", () => BoundaryTest.boundarySuite()
+  suite: "server", () => ServerTest.serverSuite()
+  suite: "logs", () => LogTest.logSuite()

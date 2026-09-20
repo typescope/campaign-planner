@@ -1,4 +1,10 @@
+# Jo's compatibility line omits patch versions; use Jo 0.13.5 or later.
 jo = "0.13"
+
+[pinning]
+harpe = "0.10.1"
+harpe-caps = "0.10.1"
+harpe-testing = "0.10.1"
 
 [module.agent]
 kind = "app"
@@ -7,7 +13,7 @@ enable-ffi = true
 src = ["src/"]
 depth = 2
 
-packages = [{ name = "harpe", version = "0.9" }]
+packages = [{ name = "harpe", version = "0.10" }]
 
 links = [
   { from = "jo.main", to = "campaign.planner.main" },
@@ -19,12 +25,12 @@ links = [
 kind = "app"
 platform = "python"
 enable-ffi = true
-src = ["tests/", "src/db/"]
+src = ["tests/", "src/"]
 depth = 2
 
 packages = [
-  { name = "harpe", version = "0.9" },
-  { name = "harpe-testing", version = "0.9" },
+  { name = "harpe", version = "0.10" },
+  { name = "harpe-testing", version = "0.10" },
 ]
 
 links = [
