@@ -33,7 +33,10 @@ private class Client
       py.dynamic(sent).update(headers)
       (chunk: py.Dynamic) => pass
     val chunks = application.wsgi()(py.dynamic(environ), py.dynamic(startResponse))
-    new Reply(statuses[0].asString, sent, py.dynamic("").encode().join(chunks).decode().asString)
+    val body = py.dynamic("").encode().join(chunks).decode().asString
+    val close = py.module("builtins").getattr(chunks, "close", py.none())
+    if !py.isNone(close) then py.call(close)
+    new Reply(statuses[0].asString, sent, body)
 end
 
 def serverSuite(): Unit receives thisSuite =
@@ -54,10 +57,15 @@ def serverSuite(): Unit receives thisSuite =
 
   test: "the page keeps its content types and security headers", () =>
     val client = new Client
-    for path ~ mime in List("/" ~ "text/html", "/app.css" ~ "text/css", "/app.js" ~ "application/javascript") do
+    for path ~ mime in List("/" ~ "text/html", "/app.css" ~ "text/css", "/app.js" ~ "text/javascript") do
       val reply = client.send("GET", path)
       check(path, reply.status == "200 OK" && reply.body.size > 0)
-      check("the content type", reply.headers.get("Content-Type").asString == mime + "; charset=utf-8")
+      val contentType = reply.headers.get("Content-Type").asString
+      check("the content type", contentType == mime + "; charset=utf-8"
+        || (path == "/app.js" && contentType == "application/javascript; charset=utf-8"))
+      check("the file is displayed inline", reply.headers.get("Content-Disposition").asString.startsWith("inline;"))
+      check("the length matches the file", reply.headers.get("Content-Length").asString
+        == py.module("builtins").len(py.dynamic(reply.body).encode()).asInt.toString)
       check("the asset is not cached", reply.headers.get("Cache-Control").asString == "no-store")
       check("the browser must not guess its type", reply.headers.get("X-Content-Type-Options").asString == "nosniff")
       check("the page's policy survives", reply.headers.get("Content-Security-Policy").asString.contains("default-src 'none'"))

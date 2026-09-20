@@ -1,7 +1,6 @@
 namespace campaign.planner
 
 import harpe.ffi.os
-import harpe.util.File
 import harpe.Model
 import harpe.server.Http
 import harpe.server.Request
@@ -15,15 +14,23 @@ import campaign.planner.db.Campaigns
 class Server(home: String, databasePath: String, brain: Option[Model])
   private val planner = new Planner(home, databasePath, brain)
 
+  //[ The page may load only its own script and stylesheet. //]
+  private val assetHeaders = List:
+    Http.Header:
+      "Content-Security-Policy"
+      "default-src 'none'; script-src 'self'; style-src 'self'; "
+        + "connect-src 'self'; img-src 'self' data:; base-uri 'none'; "
+        + "form-action 'none'"
+
   //[ The routes that need no connection, then everything else on one
     ! connection for the request. A run opens its own connections, because it
     ! lasts minutes and only its start and end touch the database here.
   //]
   def route(): Response receives request =
     match request
-    case Request.Get("/") => asset("index.html", Http.Mime.Html)
-    case Request.Get("/app.css") => asset("app.css", Http.Mime.Css)
-    case Request.Get("/app.js") => asset("app.js", Http.Mime.JavaScript)
+    case Request.Get("/") => asset("index.html")
+    case Request.Get("/app.css") => asset("app.css")
+    case Request.Get("/app.js") => asset("app.js")
     case Request.Post(path) if path.startsWith("/api/campaigns/") =>
       match Request.segments(path)
       case ["api", "campaigns", id, "run"] => refusable(() => runCampaign(id))
@@ -85,14 +92,6 @@ class Server(home: String, databasePath: String, brain: Option[Model])
     case Err(error) =>
       Response.json: py.dict("error" ~ error.message), status = Http.Status.BadRequest
 
-  //[ The page may load only its own script and stylesheet. //]
-  private def asset(name: String, mime: Http.Mime.Type): Response =
-    val headers = List:
-      Http.Header:
-        "Content-Security-Policy"
-        "default-src 'none'; script-src 'self'; style-src 'self'; "
-          + "connect-src 'self'; img-src 'self' data:; base-uri 'none'; "
-          + "form-action 'none'"
-    val body = File.read(os.path.join(home, "assets", name))
-    Response.complete(Http.Status.Success, mime, body, headers = headers)
+  private def asset(name: String): Response =
+    Response.file: os.path.join(home, "assets"), name, Response.Inline, headers = assetHeaders
 end
