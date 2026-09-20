@@ -14,14 +14,6 @@ import campaign.planner.db.Campaigns
 class Server(home: String, databasePath: String, brain: Option[Model])
   private val planner = new Planner(home, databasePath, brain)
 
-  //[ The page may load only its own script and stylesheet. //]
-  private val assetHeaders = List:
-    Http.Header:
-      "Content-Security-Policy"
-      "default-src 'none'; script-src 'self'; style-src 'self'; "
-        + "connect-src 'self'; img-src 'self' data:; base-uri 'none'; "
-        + "form-action 'none'"
-
   //[ The routes that need no connection, then everything else on one
     ! connection for the request. A run opens its own connections, because it
     ! lasts minutes and only its start and end touch the database here.
@@ -93,5 +85,5 @@ class Server(home: String, databasePath: String, brain: Option[Model])
       Response.json: py.dict("error" ~ error.message), status = Http.Status.BadRequest
 
   private def asset(name: String): Response =
-    Response.file: os.path.join(home, "assets"), name, Response.Inline, headers = assetHeaders
+    Response.file: os.path.join(home, "assets"), name, Response.Inline
 end

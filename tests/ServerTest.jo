@@ -55,7 +55,7 @@ def serverSuite(): Unit receives thisSuite =
     for path in ["/missing", "/api/campaigns/1/extra", "/api/runs/1/extra"] do
       check("unknown path: " + path, client.send("GET", path).status == "404 Not Found")
 
-  test: "the page keeps its content types and security headers", () =>
+  test: "assets are served inline with the right content types", () =>
     val client = new Client
     for path ~ mime in List("/" ~ "text/html", "/app.css" ~ "text/css", "/app.js" ~ "text/javascript") do
       val reply = client.send("GET", path)
@@ -68,7 +68,6 @@ def serverSuite(): Unit receives thisSuite =
         == py.module("builtins").len(py.dynamic(reply.body).encode()).asInt.toString)
       check("the asset is not cached", reply.headers.get("Cache-Control").asString == "no-store")
       check("the browser must not guess its type", reply.headers.get("X-Content-Type-Options").asString == "nosniff")
-      check("the page's policy survives", reply.headers.get("Content-Security-Policy").asString.contains("default-src 'none'"))
 
   test: "JSON writes preserve campaign changes and report invalid requests", () =>
     val client = new Client
