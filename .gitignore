@@ -4,5 +4,3 @@ sandbox/.build/
 data/
 logs/
 __pycache__/
-jo.lock
-sandbox/jo.lock

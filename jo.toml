@@ -1,11 +1,6 @@
 # Jo's compatibility line omits patch versions; use Jo 0.13.5 or later.
 jo = "0.13"
 
-[pinning]
-harpe = "0.10.1"
-harpe-caps = "0.10.1"
-harpe-testing = "0.10.1"
-
 [module.agent]
 kind = "app"
 platform = "python"

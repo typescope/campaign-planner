@@ -1,6 +1,6 @@
 name: CI
 
-# Every check here resolves the published packages that jo.toml pins, never
+# Every check here resolves the published packages recorded in the lock files, never
 # sources beside it, so each one is answerable at every commit and all of them
 # gate a pull request.
 
