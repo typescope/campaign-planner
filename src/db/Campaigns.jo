@@ -201,14 +201,12 @@ section Campaigns
       if line.trim != "" then
         val entry = json.loads(line).cast[py.Dict]
         val event = entry.get("event", "").asString
-        // Keep earlier runs readable alongside Harpe 0.10's event envelope.
-        val legacy = entry.get("category", "").asString == "harpe.tools.runCode"
-        if legacy || event.startsWith("harpe.tools.runCode.") then
-          val fields = if legacy then entry else entry.get("fields").cast[py.Dict]
-          val compiled = if legacy then fields.get("compiled", false).asBool else
+        if event.startsWith("harpe.tools.runCode.") then
+          val fields = entry.get("fields").cast[py.Dict]
+          val compiled =
             event == "harpe.tools.runCode.ran" || event == "harpe.tools.runCode.timedOut"
               || event == "harpe.tools.runCode.approvalTimedOut"
-          val timedOut = if legacy then fields.get("timedOut", false).asBool else
+          val timedOut =
             event == "harpe.tools.runCode.compileTimedOut" || event == "harpe.tools.runCode.timedOut"
               || event == "harpe.tools.runCode.approvalTimedOut"
           result.append: py.dict:

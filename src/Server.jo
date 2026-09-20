@@ -31,7 +31,7 @@ class Server(home: String, databasePath: String, brain: Option[Model])
     case Request.Get(path) if path.startsWith("/api/runs/") =>
       match Request.segments(path)
       case ["api", "runs", id, "programs"] =>
-        Response.json(py.dict("programs" ~ Campaigns.programs(planner.logsDir, number(id))))
+        Response.json: py.dict("programs" ~ Campaigns.programs(planner.logsDir, number(id)))
       case _ => notFound()
     case _ => refusable(() => DB.withConn(databasePath, () => connected()))
 
@@ -39,16 +39,16 @@ class Server(home: String, databasePath: String, brain: Option[Model])
     match request
     case Request.Get("/api/snapshot") =>
       Response.json: py.dict:
-        "counts"    ~ Shop.counts()
-        "campaigns" ~ Campaigns.campaigns()
+        "counts"    ~ Shop.counts
+        "campaigns" ~ Campaigns.campaigns
         "has_model" ~ planner.hasModel
-    case Request.Get("/api/customers") => Response.json(py.dict("customers" ~ Shop.customers()))
-    case Request.Get("/api/orders") => Response.json(py.dict("orders" ~ Shop.orders()))
-    case Request.Get("/api/coupons") => Response.json(py.dict("coupons" ~ Shop.coupons()))
+    case Request.Get("/api/customers") => Response.json: py.dict("customers" ~ Shop.customers)
+    case Request.Get("/api/orders") => Response.json: py.dict("orders" ~ Shop.orders)
+    case Request.Get("/api/coupons") => Response.json: py.dict("coupons" ~ Shop.coupons)
     case Request.Get(path) if path.startsWith("/api/campaigns/") =>
       match Request.segments(path)
       case ["api", "campaigns", id] =>
-        Response.json(py.dict("campaign" ~ Campaigns.campaign(number(id))))
+        Response.json: py.dict("campaign" ~ Campaigns.campaign(number(id)))
       case _ => notFound()
     case Request.Post("/api/campaigns") => ok(py.dict("id" ~ Campaigns.save(readJson())))
     case Request.Post("/api/coupons/approve") =>
@@ -62,19 +62,19 @@ class Server(home: String, databasePath: String, brain: Option[Model])
   //[ A run answers when it ends, with what the AI or the example reported. //]
   private def runCampaign(id: String): Response receives request =
     val mode = readJson().get("mode", "").asString
-    Response.json(planner.run(number(id), mode))
+    Response.json: planner.run(number(id), mode)
 
   private def readJson(): py.Dict receives request =
     Request.json() rescue None => abort "Expected a JSON object."
 
   private def notFound(): Response =
-    Response.json(py.dict("error" ~ "not found"), status = Http.Status.NotFound)
+    Response.json: py.dict("error" ~ "not found"), status = Http.Status.NotFound
 
   private def number(text: String): Int = Int.parse(text) rescue None => 0
 
   private def ok(extra: py.Dict): Response =
     extra.set("ok", true)
-    Response.json(extra)
+    Response.json: extra
 
   //[ Everything the shop declines to do is declined for a stated reason, so
     ! the owner sees the reason rather than a bare error.
@@ -83,7 +83,7 @@ class Server(home: String, databasePath: String, brain: Option[Model])
     match py.try(handler())
     case Ok(response) => response
     case Err(error) =>
-      Response.json(py.dict("error" ~ error.message), status = Http.Status.BadRequest)
+      Response.json: py.dict("error" ~ error.message), status = Http.Status.BadRequest
 
   //[ The page may load only its own script and stylesheet. //]
   private def asset(name: String, mime: Http.Mime.Type): Response =

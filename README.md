@@ -101,8 +101,8 @@ The suite builds the sandbox and runs programs through the same `runCode` path
 as the app. It proves that a program reading a name, a delivery note, Python or
 the environment does not compile, and that a program inside the interface still
 cannot save a draft the campaign does not allow. It needs no API key and no
-network. It also checks the HTTP routes and reads both current and older run
-logs, so the Runs page keeps showing program outcomes after an upgrade.
+network. It also checks the HTTP routes and program logs, including compile
+failures and timeouts.
 
 ## Layout
 

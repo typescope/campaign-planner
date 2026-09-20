@@ -32,10 +32,9 @@ def logSuite(): Unit receives thisSuite, logger =
     check("the compiler failure is shown", !failed.get("compiled").asBool)
     check("the compiler's explanation is kept", failed.get("compileError").asString.contains("does not contain the member name"))
 
-  test: "timeouts and earlier runs retain their display status", () =>
+  test: "timeouts and runtime failures have the right display status", () =>
     val dir = os.path.dirname(Guest.freshShop())
     File.write: os.path.join(dir, "run-1.jsonl"), """
-      {"time":"old","category":"harpe.tools.runCode","code":"legacy","compiled":true,"output":"earlier output","exitCode":0}
       {"time":"t1","event":"harpe.tools.runCode.compileTimedOut","fields":{"code":"compile timeout"},"context":[]}
       {"time":"t2","event":"harpe.tools.runCode.timedOut","fields":{"code":"run timeout"},"context":[]}
       {"time":"t3","event":"harpe.tools.runCode.approvalTimedOut","fields":{"code":"approval timeout"},"context":[]}
@@ -43,15 +42,12 @@ def logSuite(): Unit receives thisSuite, logger =
       {"time":"t5","event":"harpe.turn.answered","fields":{},"context":[]}
     """
     val programs = Campaigns.programs(dir, 1)
-    check("only program attempts appear", programs.size == 5)
-    val legacy = programs[0].cast[py.Dict]
-    check("an earlier run stays readable", legacy.get("code").asString == "legacy" && legacy.get("output").asString == "earlier output")
-    check("its status stays intact", legacy.get("compiled").asBool && legacy.get("exitCode").asInt == 0)
-    val compile = programs[1].cast[py.Dict]
+    check("only program attempts appear", programs.size == 4)
+    val compile = programs[0].cast[py.Dict]
     check("a compile timeout never ran", !compile.get("compiled").asBool && compile.get("timedOut").asBool)
-    for index in [2, 3] do
+    for index in [1, 2] do
       val timed = programs[index].cast[py.Dict]
       check("a runtime timeout compiled first", timed.get("compiled").asBool && timed.get("timedOut").asBool)
-    val failed = programs[4].cast[py.Dict]
+    val failed = programs[3].cast[py.Dict]
     check("a runtime failure compiled", failed.get("compiled").asBool && failed.get("exitCode").asInt == 1)
     check("it was not a timeout", !failed.get("timedOut").asBool)
