@@ -51,8 +51,8 @@ write a program** needs one model key in `.env`: `ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY`, or `OPENROUTER_API_KEY` with `MODEL`. An AI run usually takes
 two or three minutes.
 
-The app has no login and refuses to bind anywhere but loopback unless
-`ALLOW_UNSAFE_REMOTE=true` is set.
+The app has no login, so it binds to loopback and answers only to loopback
+names. It refuses to start anywhere else.
 
 ## What to try
 
