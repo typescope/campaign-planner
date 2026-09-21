@@ -1,7 +1,8 @@
 namespace campaign.planner.tests.ServerTest
 
 import harpe.ffi.os
-import harpe.server.Application
+import harpe.server.WebApp
+import harpe.server.Route
 import harpe.testing.test
 import harpe.testing.thisSuite
 import harpe.testing.check
@@ -15,7 +16,9 @@ end
 
 private class Client
   private val server = new Server(os.path.abspath("."), Guest.freshShop(), None)
-  private val application = new Application(routes = [], fallback = () => server.route())
+  private val application = new WebApp(
+        routes = [],
+        fallback = WebApp.Fallback(() => server.route(), maxBodyBytes = Route.defaultMaxBodyBytes))
 
   def send(method: String, path: String, body: String = "", mime: String = "application/json"): Reply =
     val bytes = py.dynamic(body).encode()
