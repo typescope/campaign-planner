@@ -64,7 +64,7 @@ class Server(home: String, databasePath: String, brain: Option[Model])
     Response.json: planner.run(number(id), mode)
 
   private def readJson(): py.Dict receives request =
-    Request.json() rescue None => abort "Expected a JSON object."
+    request.json() rescue None => abort "Expected a JSON object."
 
   private def notFound(): Response =
     Response.json: py.dict("error" ~ "not found"), status = Http.Status.NotFound
@@ -85,5 +85,5 @@ class Server(home: String, databasePath: String, brain: Option[Model])
       Response.json: py.dict("error" ~ error.message), status = Http.Status.BadRequest
 
   private def asset(name: String): Response =
-    Response.file: os.path.join(home, "assets"), name, Response.Inline
+    Response.file(os.path.join(home, "assets"), name)
 end

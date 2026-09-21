@@ -5,7 +5,8 @@ import harpe.ffi.os
 import harpe.ffi.sys
 import harpe.util.Process
 import harpe.util.File
-import harpe.server.Application
+import harpe.server.WebApp
+import harpe.server.Route
 import harpe.Model
 import campaign.planner.db.DB
 
@@ -31,20 +32,16 @@ def main(): Unit receives stdout =
     || os.getenv("ANTHROPIC_API_KEY", "") != ""
   val brain: Option[Model] = if keyed then Some(Model.default()) else None
   val server = new Server(home, databasePath, brain)
-  val answersTo: Application.Host.Policy =
-    if isLoopback(host) then Application.Host.Loopback
-    else if host == "0.0.0.0" || host == "::" then Application.Host.Unchecked
-    else Application.Host.Named(host)
-  val application = new Application:
-    host = answersTo
+  val application = new WebApp:
+    host = WebApp.Loopback
     routes = []
-    fallback = () => server.route()
+    fallback = WebApp.Fallback(() => server.route(), maxBodyBytes = Route.defaultMaxBodyBytes)
   val httpd = py.module("waitress").create_server:
     application.wsgi()
     host = host
     port = port
     threads = 16
-    max_request_body_size = application.ceiling
+    max_request_body_size = application.maxRequestBodyBytes
 
   println """
     Campaign Planner · Alpine Roasters demo shop
