@@ -14,10 +14,9 @@ def main(): Unit receives stdout =
   Process.loadDotenv(".env")
   val home = os.path.abspath(".")
   val host = os.getenv("HOST", "127.0.0.1")
-  val unsafe = py.dynamic(os.getenv("ALLOW_UNSAFE_REMOTE", "false")).lower().asString == "true"
-  if !isLoopback(host) && !unsafe then
+  if !isLoopback(host) then
     println "Refusing to bind to \{host}: Campaign Planner has no authentication."
-    println "Use 127.0.0.1, localhost, or ::1. ALLOW_UNSAFE_REMOTE=true is an explicit unsafe override."
+    println "Use 127.0.0.1, localhost, or ::1."
     sys.exit(1)
 
   val dataDir = os.path.join(home, "data")
