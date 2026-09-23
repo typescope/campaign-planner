@@ -32,12 +32,16 @@ Only the owner turns a draft into a coupon.
 
 ## Run
 
+See [AGENTS.md](AGENTS.md) for development commands and conventions.
+
 Requires Jo 0.13.5 or later, Java 17+, and Python 3.10+.
 
 ```sh
 git clone https://github.com/typescope/campaign-planner.git
 cd campaign-planner
-pip install -r requirements.txt
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements.txt
 cp .env.example .env
 jo start
 ```
@@ -94,6 +98,7 @@ implementation whatever the policy or the program says.
 ## Tests
 
 ```sh
+. .venv/bin/activate
 jo exec test
 ```
 
