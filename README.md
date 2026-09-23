@@ -125,5 +125,3 @@ tests/                       the boundary and the shop
 
 For the reasoning behind this design, read the case study
 [The Personalized Discounting Problem](https://harpe.typescope.ai/case-studies/personalized-discounting/).
-A version that works against a Shopify development store is
-[shopify-campaign-planner](https://github.com/typescope/shopify-campaign-planner).
