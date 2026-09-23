@@ -1,0 +1,226 @@
+namespace campaign.planner.tests.MigrationsTest
+
+import harpe.ffi.os
+import harpe.util.File
+import harpe.testing.test
+import harpe.testing.thisSuite
+import harpe.testing.check
+import harpe.logging.logger
+import campaign.planner.db.DB
+import campaign.planner.db.Campaigns
+
+private def temporaryHome(): String =
+  py.module("tempfile").mkdtemp(prefix = "cp-migrations-").asString
+
+private def shopIn(home: String): String =
+  val path = os.path.join(home, "shop.db")
+  DB.initialize(path, os.path.join(home, "migrations"))
+  path
+
+private def writeMigration(home: String, version: String, sql: String): Unit =
+  val directory = os.path.join(home, "migrations")
+  File.ensureDir(directory)
+  File.write(os.path.join(directory, version + ".sql"), sql)
+
+private def appliedVersions(path: String): List[String] =
+  val rows = DB.withConn(path, () => DB.rows("SELECT version FROM schema_migrations ORDER BY version"))
+  var versions: List[String] = []
+  for row in rows do
+    versions = versions ++ [row.cast[py.Dict].get("version").asString]
+  versions
+
+private def hasVersions(path: String, expected: List[String]): Bool =
+  val actual = appliedVersions(path)
+  actual.size == expected.size && actual.count(version => expected.contains(version)) == expected.size
+
+private def hasColumn(path: String, table: String, column: String): Bool =
+  val rows = DB.withConn(path, () => DB.rows("PRAGMA table_info(\{table})"))
+  var found = false
+  for row in rows do
+    if row.cast[py.Dict].get("name").asString == column then found = true
+  found
+
+private def value(path: String, sql: String): py.Dynamic =
+  DB.withConn(path, () => DB.rowWith(sql, py.list())).get("value")
+
+def migrationsSuite(): Unit receives thisSuite, logger =
+  test: "an existing shop without migration history is upgraded once in filename order", () =>
+    val home = temporaryHome()
+    val path = shopIn(home)
+    check("a missing migrations directory is fine", appliedVersions(path).isEmpty)
+    // A shop created by a release before migration tracking existed.
+    val connection = DB.open(path)
+    connection.execute("DROP TABLE schema_migrations")
+    connection.close()
+
+    val first = "20260101T000000-campaign-note"
+    val second = "20260101T000001-fill-note"
+    writeMigration(home, second, """
+      BEGIN IMMEDIATE;
+      UPDATE campaigns SET note = note || 'reviewed; once';
+      COMMIT;
+    """)
+    writeMigration(home, first, """
+      -- Add the column before its backfill, regardless of directory order.
+      BEGIN IMMEDIATE;
+      ALTER TABLE campaigns ADD COLUMN note TEXT NOT NULL DEFAULT '';
+      COMMIT;
+    """)
+    File.write(os.path.join(home, "migrations", "README.md"), "Not SQL")
+    File.ensureDir(os.path.join(home, "migrations", "ignored.sql"))
+
+    val _ = shopIn(home)
+    check("both files are recorded", hasVersions(path, [first, second]))
+    check("the column was added", hasColumn(path, "campaigns", "note"))
+    check:
+      "the backfill ran after the column was added"
+      value(path, "SELECT note AS value FROM campaigns WHERE id = 1").asString == "reviewed; once"
+
+    val _ = shopIn(home)
+    check("restarting keeps the same history", hasVersions(path, [first, second]))
+    check:
+      "restarting does not repeat the backfill"
+      value(path, "SELECT note AS value FROM campaigns WHERE id = 1").asString == "reviewed; once"
+    check("customers are preserved", value(path, "SELECT COUNT(*) AS value FROM customers").asInt == 60)
+    check("coupons are preserved", value(path, "SELECT COUNT(*) AS value FROM coupons").asInt == 3)
+    check:
+      "each record has an application time"
+      value(path, "SELECT COUNT(*) AS value FROM schema_migrations WHERE datetime(applied_at) IS NOT NULL").asInt == 2
+
+  test: "fresh databases and existing empty files baseline migrations", () =>
+    for existingFile in [false, true] do
+      val home = temporaryHome()
+      val path = os.path.join(home, "shop.db")
+      if existingFile then File.write(path, "")
+      val version = "20260101T000000-customer-created-on"
+      // Schema already declares this column, so executing this would fail.
+      writeMigration(home, version, """
+        BEGIN IMMEDIATE;
+        ALTER TABLE customers ADD COLUMN created_on TEXT NOT NULL DEFAULT '';
+        COMMIT;
+      """)
+      val _ = shopIn(home)
+      check("the migration is baselined", hasVersions(path, [version]))
+      check("the current schema is present", hasColumn(path, "customers", "created_on"))
+      check("the shop is seeded", value(path, "SELECT COUNT(*) AS value FROM customers").asInt == 60)
+      val _ = shopIn(home)
+      check("a baseline survives restarting", hasVersions(path, [version]))
+
+  test: "an existing unseeded database is migrated before seed data is written", () =>
+    val home = temporaryHome()
+    val path = os.path.join(home, "shop.db")
+    val connection = DB.open(path)
+    connection.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+    connection.close()
+    val version = "20260101T000000-product-price"
+    writeMigration(home, version, """
+      ALTER TABLE products ADD COLUMN price_cents INTEGER NOT NULL DEFAULT 1000;
+    """)
+    val _ = shopIn(home)
+    check("an existing table prevents baselining", hasVersions(path, [version]))
+    check("seeding used the upgraded schema", value(path, "SELECT price_cents AS value FROM products WHERE id = 1").asInt == 3400)
+
+  test: "failure rolls back one file, stops startup, and can be retried", () =>
+    val home = temporaryHome()
+    val path = shopIn(home)
+    val runId = DB.withConn(path, () => Campaigns.beginRun(1, "example"))
+    val first = "20260101T000000-rename-campaign"
+    val failing = "20260101T000001-campaign-note"
+    val last = "20260101T000002-fill-note"
+    writeMigration(home, first, "UPDATE campaigns SET name = 'Updated campaign';")
+    writeMigration(home, failing, """
+      BEGIN IMMEDIATE;
+      ALTER TABLE campaigns ADD COLUMN note TEXT NOT NULL DEFAULT '';
+      UPDATE campaigns SET budget_cents = budget_cents + 1000;
+      INSERT INTO missing_table VALUES (1);
+      COMMIT;
+    """)
+    writeMigration(home, last, "UPDATE campaigns SET note = 'ready';")
+    val outcome = py.try(shopIn(home))
+    check("startup fails", outcome is Err(_))
+    match outcome
+    case Err(error) =>
+      check("the error identifies the file", error.message.contains(failing + ".sql"))
+      check("the SQL error is retained", error.message.contains("missing_table"))
+    case Ok(_) => pass
+    check("only the preceding file is recorded", hasVersions(path, [first]))
+    check("the added column was rolled back", !hasColumn(path, "campaigns", "note"))
+    check("the data update was rolled back", value(path, "SELECT budget_cents AS value FROM campaigns WHERE id = 1").asInt == 3000)
+    check("earlier files stay committed", value(path, "SELECT name AS value FROM campaigns WHERE id = 1").asString == "Updated campaign")
+    check:
+      "startup stopped before recovering stale runs"
+      value(path, "SELECT status AS value FROM runs WHERE id = \{runId}").asString == "running"
+
+    // This file has never been applied, so correcting it is safe.
+    writeMigration(home, failing, """
+      ALTER TABLE campaigns ADD COLUMN note TEXT NOT NULL DEFAULT '';
+      UPDATE campaigns SET budget_cents = budget_cents + 1000;
+    """)
+    val _ = shopIn(home)
+    check("the failed and later files can run on retry", hasVersions(path, [first, failing, last]))
+    check("the update runs once", value(path, "SELECT budget_cents AS value FROM campaigns WHERE id = 1").asInt == 4000)
+    check("the last file ran", value(path, "SELECT note AS value FROM campaigns WHERE id = 1").asString == "ready")
+    check:
+      "startup finishes after the migrations"
+      value(path, "SELECT status AS value FROM runs WHERE id = \{runId}").asString == "failed"
+
+  test: "a failed history insert also rolls back the migration", () =>
+    val home = temporaryHome()
+    val path = shopIn(home)
+    writeMigration(home, "20260101T000000-history-failure", """
+      UPDATE campaigns SET budget_cents = budget_cents + 1000;
+      CREATE TRIGGER reject_migration BEFORE INSERT ON schema_migrations
+      BEGIN
+        SELECT RAISE(ABORT, 'history unavailable');
+      END;
+    """)
+    val outcome = py.try(shopIn(home))
+    check("startup fails when history cannot be saved", outcome is Err(_))
+    check("no version is recorded", appliedVersions(path).isEmpty)
+    check("the data update rolls back too", value(path, "SELECT budget_cents AS value FROM campaigns WHERE id = 1").asInt == 3000)
+    check:
+      "the trigger creation rolls back too"
+      value(path, "SELECT COUNT(*) AS value FROM sqlite_master WHERE name = 'reject_migration'").asInt == 0
+
+  test: "SQL boundaries preserve triggers, comments, and quoted semicolons", () =>
+    val home = temporaryHome()
+    val path = shopIn(home)
+    val version = "20260101T000000-campaign-events"
+    writeMigration(home, version, """
+      /* A transaction wrapper with a block comment. */
+      begin immediate;
+      CREATE TABLE migration_events (value TEXT NOT NULL);
+      CREATE TRIGGER campaign_name_changed AFTER UPDATE OF name ON campaigns
+      BEGIN
+        INSERT INTO migration_events VALUES ('changed; name');
+        INSERT INTO migration_events VALUES (NEW.name);
+      END;
+      UPDATE campaigns SET name = 'A; campaign'; UPDATE campaigns SET name = name || '!';
+      -- The runner owns the commit, including the version record.
+      commit;
+      -- Trailing comment; not a statement.
+      /* Another trailing comment. */
+    """)
+    val _ = shopIn(home)
+    check("the migration is recorded", hasVersions(path, [version]))
+    check("both trigger statements ran on both updates", value(path, "SELECT COUNT(*) AS value FROM migration_events").asInt == 4)
+    check("quoted semicolons are preserved", value(path, "SELECT value FROM migration_events WHERE rowid = 1").asString == "changed; name")
+    check("both updates ran", value(path, "SELECT value FROM migration_events WHERE rowid = 4").asString == "A; campaign!")
+
+  test: "unfinished SQL and transaction escapes cannot be recorded", () =>
+    val invalid = [
+      "UPDATE campaigns SET name = 'unfinished'",
+      "ROLLBACK;",
+      "COMMIT /* early */; INSERT INTO missing_table VALUES (1);"
+    ]
+    for tail in invalid do
+      val home = temporaryHome()
+      val path = shopIn(home)
+      writeMigration:
+        home
+        "20260101T000000-invalid"
+        "ALTER TABLE campaigns ADD COLUMN note TEXT;\n" + tail
+      val outcome = py.try(shopIn(home))
+      check("startup rejects the file", outcome is Err(_))
+      check("no version is recorded", appliedVersions(path).isEmpty)
+      check("no partial schema change remains", !hasColumn(path, "campaigns", "note"))

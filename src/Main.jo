@@ -22,7 +22,7 @@ def main(): Unit receives stdout =
   val dataDir = os.path.join(home, "data")
   File.ensureDir(dataDir)
   val databasePath = os.path.join(dataDir, "shop.db")
-  DB.initialize(databasePath)
+  DB.initialize(databasePath, os.path.join(home, "migrations"))
 
   val port = Int.parse(os.getenv("PORT", "8768")) rescue None => 8768
   // Model.default() stops the app when no key is set, and the example program

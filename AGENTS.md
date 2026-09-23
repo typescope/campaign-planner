@@ -32,6 +32,8 @@ Inspect the diff before handing off. Report checks run and any that could not ru
 - Enforce budget and offer limits in `PromotionsImpl`.
   Save each batch of drafts in one transaction. Reject the whole batch on failure.
 - Represent money as integer cents.
+- For database shape changes, update `src/db/Schema.jo` and add an append-only
+  timestamped SQL migration. Follow [migrations/README.md](migrations/README.md).
 - Keep Python FFI out of the API and guest modules.
   Expose database access through capabilities implemented in the trusted runtime.
 - Change capability APIs, runtime bindings, and the `runTask` placeholder together.

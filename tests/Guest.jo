@@ -18,7 +18,7 @@ import campaign.planner.db.Campaigns
 def freshShop(): String =
   val dir = py.module("tempfile").mkdtemp(prefix = "cp-shop-").asString
   val path = os.path.join(dir, "shop.db")
-  DB.initialize(path)
+  DB.initialize(path, os.path.join(dir, "migrations"))
   path
 
 //[ What `code` printed, or the compiler's complaint, in a new run of the

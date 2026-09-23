@@ -49,6 +49,10 @@ jo start
 Open <http://127.0.0.1:8768>. The first start creates `data/shop.db` with sixty
 customers and a campaign ready to run.
 
+Startup also applies pending SQL files from `migrations/` before seeding or
+serving requests. See [the migration guide](migrations/README.md) for adding
+schema changes and inspecting migration history.
+
 **Run example program** needs no API key. It runs a checked-in program for the
 sample policy, compiled and run exactly like one the AI writes. **Let the AI
 write a program** needs one model key in `.env`: `ANTHROPIC_API_KEY`,
@@ -109,12 +113,16 @@ cannot save a draft the campaign does not allow. It needs no API key and no
 network. It also checks the HTTP routes and program logs, including compile
 failures and timeouts.
 
+The migration tests cover fresh databases, existing shops, ordering, retries,
+and transaction rollback. Run just those with `jo run tests -- migrations`.
+
 ## Layout
 
 ```
 src/Main.jo, src/Server.jo   the local web app
 src/Planner.jo               one run: the AI, or the example program
 src/db/                      schema, seed data, and the owner's operations
+migrations/                  SQL upgrades for existing databases
 sandbox/                     the interface and its implementation
 examples/late-regulars.jo    the sample policy as a program
 prompts/plan.md              the AI's instructions

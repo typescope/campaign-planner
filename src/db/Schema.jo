@@ -3,9 +3,13 @@
   ! Every table in `data/shop.db`, in one place.
   !
   ! The first four tables are the shop: what an ordinary online shop keeps,
-  ! personal details included. The last three are the campaign planner's. The
+  ! personal details included. The next three are the campaign planner's. The
   ! AI-generated program reaches none of them directly. It sees only what
   ! `sandbox/PromotionsImpl.jo` reads out of them.
+  !
+  ! This file describes the current schema. Changing an existing table also
+  ! needs an append-only SQL file in `migrations/`; `CREATE TABLE IF NOT EXISTS`
+  ! cannot update a table that is already there.
 //]
 
 namespace campaign.planner.db
@@ -15,10 +19,15 @@ import harpe.util.File
 
 section Schema
 
-  //[ Create every table and index that is missing. Safe to run on every start. //]
-  def initialize(path: String): Unit =
+  //[ Create missing tables and indexes, and report whether the database was
+    ! empty before doing so. Even an existing empty file needs a fresh baseline.
+  //]
+  def initialize(path: String): Bool =
     File.ensureDir(os.path.dirname(path))
     val conn = DB.open(path)
+    val fresh = conn.execute("""
+      SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'
+    """).fetchone()[0].asInt == 0
     conn.executescript("""
       CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY,
@@ -100,7 +109,14 @@ section Schema
       );
       CREATE INDEX IF NOT EXISTS coupons_customer ON coupons(customer_id, status);
       CREATE INDEX IF NOT EXISTS coupons_campaign ON coupons(campaign_id, status);
+
+      -- Migration filenames this database has applied or baselined.
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version TEXT PRIMARY KEY,
+        applied_at TEXT NOT NULL
+      );
     """)
     conn.commit()
     conn.close()
+    fresh
 end

@@ -1,0 +1,109 @@
+//[ Migrations.jo
+  !
+  ! Bring existing databases up to the current schema, using the same convention
+  ! as smart-logistics: append-only, timestamped SQL files in filename order.
+  ! `Schema` runs first; a fresh database records the files without running them
+  ! because it already has the shape they describe.
+  !
+  ! Each file and its row in `schema_migrations` share one transaction. A failed
+  ! file leaves neither partial changes nor a record claiming it succeeded.
+//]
+
+namespace campaign.planner.db
+
+import harpe.ffi.os
+import harpe.util.File
+
+section Migrations
+
+  //[ A missing directory is fine: a checkout may not need any migrations yet.
+    ! `DB.withConn` also closes the connection when a migration fails.
+  //]
+  def reconcile(databasePath: String, directory: String, fresh: Bool): Unit =
+    if os.path.isdir(directory) then
+      DB.withConn(databasePath, () => apply(directory, fresh))
+
+  private def apply(directory: String, fresh: Bool): Unit receives conn =
+    val versions = pending(directory, recorded())
+    if fresh then DB.inTransaction(() => baseline(versions))
+    else
+      for version in versions do
+        run(version, os.path.join(directory, version + ".sql"))
+
+  private def recorded(): List[String] receives conn =
+    var out: List[String] = []
+    for row in py.iter(conn.execute("SELECT version FROM schema_migrations")) do
+      out = out ++ [row[0].asString]
+    out
+
+  private def pending(directory: String, applied: List[String]): List[String] =
+    val names = py.module("builtins").sorted(os.listdir(directory))
+    var out: List[String] = []
+    for name in py.iter(names) do
+      val file = name.asString
+      if file.endsWith(".sql") && os.path.isfile(os.path.join(directory, file)) then
+        val version = file.substring(0, file.size - 4)
+        if !applied.contains(version) then out = out ++ [version]
+    out
+
+  private def baseline(versions: List[String]): Unit receives conn =
+    for version in versions do record(version)
+
+  private def record(version: String): Unit receives conn =
+    conn.execute:
+      "INSERT INTO schema_migrations(version, applied_at) VALUES(?, datetime('now'))"
+      py.list(version)
+
+  private def run(version: String, path: String): Unit receives conn =
+    match py.try(DB.inTransaction(() => attempt(version, path)))
+    case Ok(_) => pass
+    case Err(error) =>
+      abort("migration \{version} failed and was rolled back: \{error.message}. "
+            + "Check \{path} and start again.")
+
+  private def attempt(version: String, path: String): Unit receives conn =
+    for statement in statements(File.read(path)) do
+      conn.execute(statement)
+    record(version)
+
+  //[ SQLite recognizes statement boundaries, including semicolons inside
+    ! strings and trigger bodies. Check at each semicolon so several statements
+    ! on one line work too. Never silently record a file with unfinished SQL.
+  //]
+  private def statements(sql: String): List[String] =
+    val sqlite = py.module("sqlite3")
+    var out: List[String] = []
+    var buffer = ""
+    for character in py.iter(py.dynamic(sql)) do
+      val text = character.asString
+      buffer = buffer + text
+      if text == ";" && sqlite.complete_statement(buffer).asBool then
+        val code = withoutLeadingComments(buffer)
+        if code != "" && !isTransactionControl(code) then out = out ++ [buffer.trim]
+        buffer = ""
+    if withoutLeadingComments(buffer) != "" then
+      abort "incomplete SQL statement; end each statement with a semicolon"
+    out
+
+  private def withoutLeadingComments(statement: String): String =
+    val code = py.module("re").sub:
+      "(?s)^(?:\\s+|--[^\\n]*(?:\\n|$)|/\\*.*?\\*/)*"
+      ""
+      statement
+    code.asString.trim
+
+  //[ Files may keep their own BEGIN/COMMIT for manual review on a database
+    ! copy. The runner owns the transaction, including its history entry, so
+    ! skip those wrappers and reject other transaction controls.
+  //]
+  private def isTransactionControl(statement: String): Bool =
+    val re = py.module("re")
+    val control = re.search("(?i)^(BEGIN|COMMIT|END|ROLLBACK|SAVEPOINT|RELEASE)\\b", statement)
+    val wrapper = re.fullmatch:
+      "(?is)(?:BEGIN(?:\\s+(?:DEFERRED|IMMEDIATE|EXCLUSIVE))?(?:\\s+TRANSACTION)?"
+        + "|(?:COMMIT|END)(?:\\s+TRANSACTION)?)\\s*;"
+      statement
+    if !py.isNone(control) && py.isNone(wrapper) then
+      abort "unsupported transaction control; use plain BEGIN IMMEDIATE and COMMIT wrappers"
+    !py.isNone(wrapper)
+end

@@ -37,11 +37,14 @@ section DB
     case Ok(value) => value
     case Err(error) => abort error.message
 
-  //[ Build the database and make sure it has a shop in it. Called once, from
+  //[ Create missing tables, migrate existing ones, then seed the shop and
+    ! recover interrupted runs. A fresh database already has the current schema,
+    ! so its migrations are recorded without being run. Called once, from
     ! `Main`, before anything serves.
   //]
-  def initialize(path: String): Unit =
-    Schema.initialize(path)
+  def initialize(path: String, migrationsDir: String): Unit =
+    val fresh = Schema.initialize(path)
+    Migrations.reconcile(path, migrationsDir, fresh)
     withConn(path, () => prepare())
 
   private def prepare(): Unit receives conn =
