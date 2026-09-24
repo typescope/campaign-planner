@@ -11,6 +11,7 @@
 namespace campaign.planner.tests.Main
 
 import jo.IO.stdout
+import jo.IO.args
 import harpe.logging.Logging
 import harpe.logging.logger
 import harpe.testing.Testing
@@ -23,12 +24,12 @@ import campaign.planner.tests.ServerTest
 import campaign.planner.tests.LogTest
 import campaign.planner.tests.MigrationsTest
 
-def main(): Unit receives stdout =
+def main(): Unit receives stdout, args =
   Logging.withLogger(Logging.discard, () => run())
 
-private def run(): Unit receives stdout, logger =
+private def run(): Unit receives stdout, logger, args =
   val root = Testing.define("campaign-planner", () => suites())
-  val passed = Runner.run(root, Runner.filterFromArgs(), Runner.lanesFromEnv())
+  val passed = Runner.runWithArgs(root)
   if !passed then py.module("sys").exit(1)
   println ""
   println "all campaign-planner tests passed"

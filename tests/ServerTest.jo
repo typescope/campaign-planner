@@ -17,8 +17,8 @@ end
 private class Client
   private val server = new Server(os.path.abspath("."), Guest.freshShop(), None)
   private val application = new WebApp(
-        routes = [],
-        fallback = WebApp.Fallback(() => server.route(), maxBodyBytes = Route.defaultMaxBodyBytes))
+        routes = [Route.assets("/assets/", os.path.abspath("assets"))],
+        fallback = WebApp.Fallback(() => server.route(), maxReqBody = Route.defaultMaxReqBody))
 
   def send(method: String, path: String, body: String = "", mime: String = "application/json"): Reply =
     val bytes = py.dynamic(body).encode()
@@ -60,12 +60,12 @@ def serverSuite(): Unit receives thisSuite =
 
   test: "assets are served inline with the right content types", () =>
     val client = new Client
-    for path ~ mime in List("/" ~ "text/html", "/app.css" ~ "text/css", "/app.js" ~ "text/javascript") do
+    for path ~ mime in List("/" ~ "text/html", "/assets/app.css" ~ "text/css", "/assets/app.js" ~ "text/javascript") do
       val reply = client.send("GET", path)
       check(path, reply.status == "200 OK" && reply.body.size > 0)
       val contentType = reply.headers.get("Content-Type").asString
       check("the content type", contentType == mime + "; charset=utf-8"
-        || (path == "/app.js" && contentType == "application/javascript; charset=utf-8"))
+        || (path == "/assets/app.js" && contentType == "application/javascript; charset=utf-8"))
       check("the file is displayed inline", reply.headers.get("Content-Disposition").asString.startsWith("inline;"))
       check("the length matches the file", reply.headers.get("Content-Length").asString
         == py.module("builtins").len(py.dynamic(reply.body).encode()).asInt.toString)
