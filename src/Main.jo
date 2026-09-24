@@ -33,14 +33,14 @@ def main(): Unit receives stdout =
   val server = new Server(home, databasePath, brain)
   val application = new WebApp:
     host = WebApp.Loopback
-    routes = []
-    fallback = WebApp.Fallback(() => server.route(), maxBodyBytes = Route.defaultMaxBodyBytes)
+    routes = [Route.assets("/assets/", os.path.join(home, "assets"))]
+    fallback = WebApp.Fallback(() => server.route(), maxReqBody = Route.defaultMaxReqBody)
   val httpd = py.module("waitress").create_server:
     application.wsgi()
     host = host
     port = port
     threads = 16
-    max_request_body_size = application.maxRequestBodyBytes
+    max_request_body_size = application.maxReqBody
 
   println """
     Campaign Planner · Alpine Roasters demo shop

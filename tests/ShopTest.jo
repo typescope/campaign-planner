@@ -9,6 +9,7 @@ namespace campaign.planner.tests.ShopTest
 import harpe.testing.test
 import harpe.testing.thisSuite
 import harpe.testing.check
+import harpe.testing.testResult
 import harpe.logging.logger
 import campaign.planner.db.DB
 import campaign.planner.db.conn
@@ -49,7 +50,7 @@ def shopSuite(): Unit receives thisSuite, logger =
     val path = Guest.freshShop()
     DB.withConn(path, () => limits())
 
-private def decide(): Unit receives conn, thisSuite, logger =
+private def decide(): Unit receives conn, thisSuite, logger, testResult =
   val coupons = Campaigns.campaign(1).get("coupons").cast[py.List]
   val first = coupons[0].cast[py.Dict].get("id").asInt
   val second = coupons[1].cast[py.Dict].get("id").asInt
@@ -69,14 +70,14 @@ private def decide(): Unit receives conn, thisSuite, logger =
   val twice = py.try(Campaigns.approve(second))
   check("a rejected draft cannot be approved", twice is Err(_))
 
-private def rerun(): Unit receives conn, thisSuite, logger =
+private def rerun(): Unit receives conn, thisSuite, logger, testResult =
   check("six drafts wait", Campaigns.committedCents(1) == 2700)
   val _ = Campaigns.beginRun(1, "example")
   check("a new run frees the budget they held", Campaigns.committedCents(1) == 0)
   val again = py.try(Campaigns.beginRun(1, "example"))
   check("and a second run cannot start alongside it", again is Err(_))
 
-private def limits(): Unit receives conn, thisSuite, logger =
+private def limits(): Unit receives conn, thisSuite, logger, testResult =
   val over = py.try(Campaigns.save(py.dict(
     "id" ~ 0, "name" ~ "Too generous", "policy" ~ "Give everyone a coupon.",
     "budget_cents" ~ 1000, "max_offer_cents" ~ 2000, "valid_days" ~ 14)))

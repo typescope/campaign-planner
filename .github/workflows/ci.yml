@@ -11,7 +11,7 @@ on:
     branches: [main]
 
 env:
-  JO_REGISTRY_URL: https://pkg.typescope.ai
+  JO_REGISTRY_URL: https://pkg.jo-lang.org
 
 jobs:
   agent:
