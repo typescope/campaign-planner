@@ -15,6 +15,8 @@ Activate the environment in each shell before installing dependencies or running
 - Install dependencies: `python -m pip install -r requirements.txt`.
 - Build the application: `jo build agent`.
 - Build the sandbox: `jo build --spec sandbox/jo.toml guest`.
+- Query resolved APIs: `jo compile --query jo.List,jo.Map` (replace the selectors
+  with the APIs you need).
 - Run the web application after configuration: `jo start`.
 - Run tests: `jo exec test`. This builds the sandbox before running the suite.
   No provider API key is needed.
