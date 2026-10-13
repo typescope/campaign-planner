@@ -14,10 +14,10 @@ import jo.IO.stdout
 import jo.IO.args
 import harpe.logging.Logging
 import harpe.logging.logger
-import harpe.testing.Testing
-import harpe.testing.Runner
-import harpe.testing.suite
-import harpe.testing.thisSuite
+import jtest.Testing
+import jtest.Runner
+import jtest.suite
+import jtest.thisSuite
 import campaign.planner.tests.ShopTest
 import campaign.planner.tests.BoundaryTest
 import campaign.planner.tests.ServerTest
@@ -29,8 +29,7 @@ def main(): Unit receives stdout, args =
 
 private def run(): Unit receives stdout, logger, args =
   val root = Testing.define("campaign-planner", () => suites())
-  val passed = Runner.runWithArgs(root)
-  if !passed then py.module("sys").exit(1)
+  Runner.runWithArgs(root)
   println ""
   println "all campaign-planner tests passed"
 

@@ -34,7 +34,7 @@ Only the owner turns a draft into a coupon.
 
 See [AGENTS.md](AGENTS.md) for development commands and conventions.
 
-Requires Jo 0.13.5 or later, Java 17+, and Python 3.10+.
+Requires Jo 0.14.0 or later, Java 17+, and Python 3.10+.
 
 ```sh
 git clone https://github.com/typescope/campaign-planner.git

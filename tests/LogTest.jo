@@ -3,9 +3,9 @@ namespace campaign.planner.tests.LogTest
 import harpe.ffi.os
 import harpe.util.File
 import harpe.logging.*
-import harpe.testing.test
-import harpe.testing.thisSuite
-import harpe.testing.check
+import jtest.test
+import jtest.thisSuite
+import jtest.check
 import campaign.planner.db.Campaigns
 import campaign.planner.tests.Guest
 
