@@ -6,10 +6,10 @@
 
 namespace campaign.planner.tests.ShopTest
 
-import harpe.testing.test
-import harpe.testing.thisSuite
-import harpe.testing.check
-import harpe.testing.testResult
+import jtest.test
+import jtest.thisSuite
+import jtest.check
+import jtest.testResult
 import harpe.logging.logger
 import campaign.planner.db.DB
 import campaign.planner.db.conn

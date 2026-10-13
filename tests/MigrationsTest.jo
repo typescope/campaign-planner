@@ -2,9 +2,9 @@ namespace campaign.planner.tests.MigrationsTest
 
 import harpe.ffi.os
 import harpe.util.File
-import harpe.testing.test
-import harpe.testing.thisSuite
-import harpe.testing.check
+import jtest.test
+import jtest.thisSuite
+import jtest.check
 import harpe.logging.logger
 import campaign.planner.db.DB
 import campaign.planner.db.Campaigns

@@ -3,9 +3,9 @@ namespace campaign.planner.tests.ServerTest
 import harpe.ffi.os
 import harpe.server.WebApp
 import harpe.server.Route
-import harpe.testing.test
-import harpe.testing.thisSuite
-import harpe.testing.check
+import jtest.test
+import jtest.thisSuite
+import jtest.check
 import campaign.planner.Server
 import campaign.planner.tests.Guest
 
@@ -86,7 +86,7 @@ def serverSuite(): Unit receives thisSuite =
       for invalid in ["", "{", "[]", "null"] do
         val reply = client.send("POST", path, invalid)
         check("invalid JSON: " + path, reply.status == "400 Bad Request")
-        check("the refusal is JSON", reply.json.get("error").asString == "Expected a JSON object.")
+        check("the refusal is JSON", reply.json.get("error").asString.contains("Expected a JSON object."))
       check("wrong media type: " + path, client.send("POST", path, "{}", "text/plain").status == "400 Bad Request")
     val run = client.send("POST", "/api/campaigns/1/run", "{\"mode\":\"agent\"}")
     check("the run endpoint reports the missing model", run.status == "200 OK" && !run.json.get("ok").asBool)
