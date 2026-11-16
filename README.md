@@ -43,7 +43,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r requirements.txt
 cp .env.example .env
-jo start
+jo exec start
 ```
 
 Open <http://127.0.0.1:8768>. The first start creates `data/shop.db` with sixty

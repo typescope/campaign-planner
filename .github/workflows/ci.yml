@@ -37,10 +37,10 @@ jobs:
         with:
           python-version: '3.12'
 
-      # Harpe 0.14.0 requires Jo 0.14.0.
+      # Validate Harpe 0.15 with the compiler used for its release.
       - name: Install Jo
         run: |
-          curl -sSf https://jo-lang.org/install.sh | JO_VERSION=0.14.0 sh
+          curl -sSf https://jo-lang.org/install.sh | JO_VERSION=0.14.12 sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install requirements
