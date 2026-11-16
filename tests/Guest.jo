@@ -32,7 +32,7 @@ def run(path: String, code: String): String receives logger =
 
 def runIn(path: String, runId: Int, code: String): String receives logger =
   val sandbox = os.path.join(os.path.abspath("."), "sandbox")
-  val tool = RunCodeTool(sandbox, approvalDeadline = 30, runTimeout = 60)
+  val tool = RunCodeTool(sandbox, "guest", approvalDeadline = 30, runTimeout = 60)
   val env = Map:
     "CAMPAIGN_DB"  ~ path
     "CAMPAIGN_ID"  ~ "1"

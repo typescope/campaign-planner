@@ -24,7 +24,7 @@ import campaign.planner.db.Campaigns
 
 class Planner(home: String, databasePath: String, brain: Option[Model])
   private val lock = threading.Lock()
-  private val runCode = RunCodeTool(os.path.join(home, "sandbox"), approvalDeadline = 30, runTimeout = 60)
+  private val runCode = RunCodeTool(os.path.join(home, "sandbox"), "guest", approvalDeadline = 30, runTimeout = 60)
 
   //[ Whether a model is configured, so the page can say why the AI button is
     ! off rather than fail when pressed.
